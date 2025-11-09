@@ -27,6 +27,8 @@ classdef iLQR_CLASS < handle
         x_0
         tol = 1e-6; % Define tolerance for cost change
         maxiter = 100;
+        alpha_factor = 0.5; % Factor to shrink alpha (e.g., 0.5)
+        min_alpha = 1e-8;   % Minimum alpha to try
     end
 
     methods
@@ -54,7 +56,7 @@ classdef iLQR_CLASS < handle
             % Assign validated values to object properties
             props = fieldnames(args);
             for k = 1:numel(props)
-                obj.(props{k}) = args.(props{k});
+                    obj.(props{k}) = args.(props{k});
             end
             obj.n_x = length(obj.x_0);
             [obj.n_u, ~] = size(obj.U_ff);
@@ -71,7 +73,7 @@ classdef iLQR_CLASS < handle
             xkPlusOne = obj.f_fcn(x, u);
             f_x = obj.f_x_fcn(x, u);
             f_u = obj.f_u_fcn(x, u);
-            
+
         end
 
         function [l, l_x, l_u, l_xx, l_ux, l_uu] = stage_cost_fcn(obj, x, u)
@@ -84,13 +86,13 @@ classdef iLQR_CLASS < handle
             l_ux = obj.l_ux_fcn(x, u);
             l_uu = obj.l_uu_fcn(x, u);
         end
-        
+
         function [l_f, l_f_x, l_f_xx] = terminal_cost_fcn(obj, x)
             l_f = obj.l_f_fcn(x);
             l_f_x = obj.l_f_x_fcn(x);
             l_f_xx = obj.l_f_xx_fcn(x);
         end
-        
+
         function [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = Q_fcn(obj, x, u, V_x, V_xx)
             [~, l_x, l_u, l_xx, l_ux, l_uu] = obj.stage_cost_fcn(x, u);
             [~, f_x, f_u] = obj.dynamics_fcn(x, u);
@@ -109,27 +111,48 @@ classdef iLQR_CLASS < handle
             V_x_prev = Q_x + Q_u*K;
             V_xx_prev = Q_xx + Q_ux'*K;
         end
-        
-        function [X, U, cost] = forward_pass(obj)
-            X = zeros(obj.n_x, obj.N+1);
-            X(:, 1) = obj.x_0;
-            cost = 0;
-            for k = 1:obj.N
-                xk = X(:, k);
-                xk_old = obj.X(:, k);
-                delta_x = xk - xk_old;
-                K = obj.K_cell_array{k};
-                uk = obj.U(:, k) + obj.U_ff(:, k) + K*delta_x;
-                xkPlusOne = obj.f_fcn(xk, uk);
-                X(:, k+1) = xkPlusOne;
-                obj.U(:, k) = uk;
-                cost = cost + obj.l_fcn(xk, uk);
-            end
-            cost = cost + obj.l_f_fcn(X(:, end));
-            obj.X = X;
-            U = obj.U;
-        end
 
+        % --- MODIFIED FUNCTION ---
+        function [X_new, U_new, cost_new] = forward_pass(obj, alpha)
+            % This function now takes an 'alpha' and returns a
+            % CANDIDATE trajectory, without modifying obj.X or obj.U
+
+            X_new = zeros(obj.n_x, obj.N+1);
+            X_new(:, 1) = obj.x_0;
+            U_new = zeros(obj.n_u, obj.N);
+            cost_new = 0;
+
+            for k = 1:obj.N
+                xk_new = X_new(:, k);       % State from this candidate rollout
+                xk_old = obj.X(:, k);       % State from the *previous* nominal trajectory
+
+                delta_x = xk_new - xk_old;
+
+                K = obj.K_cell_array{k};
+                uk_old = obj.U(:, k);       % Control from *previous* nominal trajectory
+                uk_ff = obj.U_ff(:, k);   % Feedforward *correction*
+
+                % --- THIS IS THE KEY LINE SEARCH EQUATION ---
+                % u_new = u_nom + alpha * k + K * (x_new - x_nom)
+                uk_new = uk_old + alpha * uk_ff + K * delta_x;
+
+                % Store the new control
+                U_new(:, k) = uk_new;
+
+                % Simulate true nonlinear dynamics
+                xkPlusOne = obj.f_fcn(xk_new, uk_new);
+                X_new(:, k+1) = xkPlusOne;
+
+                % Calculate stage cost
+                cost_new = cost_new + obj.l_fcn(xk_new, uk_new);
+            end
+
+            % Add terminal cost
+            cost_new = cost_new + obj.l_f_fcn(X_new(:, end));
+
+            % --- NOTE: We DO NOT do obj.X = X_new here. ---
+            % The optimize_trajectory function will do that if cost_new is good.
+        end
         function backward_pass(obj)
             x = obj.X(:, end);
             [l_f, l_f_x, l_f_xx] = obj.terminal_cost_fcn(x);
@@ -144,44 +167,75 @@ classdef iLQR_CLASS < handle
                 V_x = V_x_prev;
                 V_xx = V_xx_prev;
             end
-            
+
         end
 
-        function [X, U, cost] = optimize_trajectory(obj)
+        % --- MODIFIED FUNCTION ---
+        function [X_star, U_star, cost] = optimize_trajectory(obj)
 
-            % 1. Run the initial forward pass to get the nominal trajectory
-            [X, U, cost] = obj.forward_pass();
+            % 1. Run the initial "rollout" to get the cost of the initial guess.
+            % We call forward_pass with alpha=0. This simulates the initial
+            % obj.U with K=0 and U_ff=0, giving the initial cost.
+            [obj.X, obj.U, cost] = obj.forward_pass(0);
 
-            cost_prev = inf;
+            fprintf('Initial cost: %.4f\n', cost);
+
+            cost_prev = cost;
 
             % 2. Run the optimization loop
             for i = 1:obj.maxiter
 
                 % 3. Check for convergence
-                   % This compares the new cost (cost) from the *previous*
-                   % iteration with the one before it (cost_prev).
-                if abs(cost - cost_prev) <= obj.tol
+                if abs(cost - cost_prev) <= obj.tol && i > 1
                     fprintf('Converged at iteration %d\n', i);
                     break;
                 end
 
-                % 4. Store the current cost *before* you calculate the next one
+                % 4. Store the current cost
                 cost_prev = cost;
 
-                % 5. Compute new gains based on the current (X, U)
-                obj.backward_pass();
+                % 5. Compute new gains based on the current (obj.X, obj.U)
+                obj.backward_pass(); % This populates obj.U_ff and obj.K_cell_array
 
-                % 6. Apply new gains (with line search) to get a new,
-                   % lower-cost trajectory (X, U) and its new 'cost'.
-                [X, U, cost] = obj.forward_pass();
+                % 6. === LINE SEARCH ===
+                % Try to find a step size alpha that reduces the cost
+                alpha = 1.0; % Start with a full step
+                is_step_accepted = false;
+
+                for j = 1:10 % Max line search attempts
+                    [X_new, U_new, cost_new] = obj.forward_pass(alpha);
+
+                    % Check for cost reduction
+                    if cost_new < cost_prev
+                        % SUCCESS: Accept the new trajectory
+                        obj.X = X_new;
+                        obj.U = U_new;
+                        cost = cost_new;
+                        is_step_accepted = true;
+                        fprintf('  Iter %d (alpha=%.2e): Cost improved to %.4f\n', i, alpha, cost);
+                        break; % Exit line search loop
+                    else
+                        % FAILURE: Reduce step size and try again
+                        alpha = alpha * obj.alpha_factor;
+                        if alpha < obj.min_alpha
+                            break; % Alpha is too small
+                        end
+                    end
+                end
+
+                if ~is_step_accepted
+                    fprintf('Warning: Line search failed at iteration %d. Cost did not improve.\n', i);
+                    break; % Exit main optimization loop
+                end
+                % === END LINE SEARCH ===
             end
 
             if i == obj.maxiter
                 fprintf('Warning: Reached max iterations (%d) without converging.\n', obj.maxiter);
             end
 
-            X_star = X;
-            U_star = U;
+            X_star = obj.X;
+            U_star = obj.U;
         end
 
     end

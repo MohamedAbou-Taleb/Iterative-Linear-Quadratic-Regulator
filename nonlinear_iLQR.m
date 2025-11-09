@@ -145,7 +145,6 @@ plot(tspan, X_bar_casadi(2, :), 'r--', 'LineWidth', 2);
 title('Optimal State Trajectory');
 xlabel('Time (s)');
 ylabel('State');
-% legend('x_1 (Position)', 'x_2 (Velocity)');
 grid on;
 
 % Plot Control
