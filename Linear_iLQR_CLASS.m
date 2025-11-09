@@ -1,6 +1,10 @@
 classdef Linear_iLQR_CLASS < handle
     %LINEAR_ILQR_CLASS Summary of this class goes here
     %   Detailed explanation goes here
+    % This class implements the Linear Iterative Linear Quadratic Regulator (iLQR) algorithm.
+    % It is designed to optimize trajectories for linear systems by minimizing a quadratic cost function.
+    % The class encapsulates the system dynamics, cost function, and the optimization process,
+    % providing methods for forward and backward passes to compute the optimal control inputs.
 
     properties
         A
@@ -59,17 +63,17 @@ classdef Linear_iLQR_CLASS < handle
             %METHOD1 Summary of this method goes here
             %   Detailed explanation goes here
             l = ( 0.5 * x'*obj.Q*x + 0.5 * u'*obj.R*u ) * obj.dt;
-            l_x = obj.Q*x*obj.dt;
-            l_u = obj.R*u*obj.dt;
+            l_x = x'*obj.Q*obj.dt;
+            l_u = u'*obj.R*obj.dt;
             l_xx = obj.Q*obj.dt;
-            l_ux = zeros(size(obj.B))*obj.dt;
-            % l_ux = zeros(size(obj.B))'*obj.dt;
+            % l_ux = zeros(size(obj.B))*obj.dt;
+            l_ux = zeros(size(obj.B))'*obj.dt;
             l_uu = obj.R*obj.dt;
         end
         
         function [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x)
             l_f = 0.5 * x'*obj.Q_f*x;
-            l_f_x = obj.Q_f*x;
+            l_f_x = x'*obj.Q_f;
             l_f_xx = obj.Q_f;
         end
         
@@ -77,20 +81,19 @@ classdef Linear_iLQR_CLASS < handle
             [l, l_x, l_u, l_xx, l_ux, l_uu] = obj.l_fcn(x, u);
             [xkPlusOne, f_x, f_u] = obj.f_fcn(x, u);
 
-            Q_x = l_x + f_x'*V_x;
-            Q_u = l_u + f_u'*V_x;
+            Q_x = l_x + V_x*f_x;
+            Q_u = l_u + V_x*f_u;
             Q_xx = l_xx + f_x'*V_xx*f_x;
-            % % % Q_ux = l_ux + f_u'*V_xx*f_x;
-            Q_ux = l_ux' + f_u'*V_xx*f_x;
+            Q_ux = l_ux + f_u'*V_xx*f_x;
+            % Q_ux = l_ux' + f_u'*V_xx*f_x;
             Q_uu = l_uu + f_u'*V_xx*f_u;
         end
 
         function [u_ff, K, V_x_prev, V_xx_prev] = u_opt_fcn(obj, x, u, V_x, V_xx)
             [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = obj.Q_fcn(x, u, V_x, V_xx);
             K = -Q_uu\Q_ux;
-            u_ff = -Q_uu\Q_u;
-            % V_x_prev = Q_x + Q_u*K;
-            V_x_prev = Q_x + Q_u*K';
+            u_ff = -Q_uu\Q_u';
+            V_x_prev = Q_x + Q_u*K;
             V_xx_prev = Q_xx + Q_ux'*K;
         end
         
@@ -112,7 +115,7 @@ classdef Linear_iLQR_CLASS < handle
             U = obj.U;
         end
 
-        function [X_star, U_star] = backward_pass(obj)
+        function backward_pass(obj)
             x = obj.X(:, end);
             [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x);
             V_x = l_f_x;
@@ -127,9 +130,6 @@ classdef Linear_iLQR_CLASS < handle
                 V_x = V_x_prev;
                 V_xx = V_xx_prev;
             end
-
-            
-
         end
 
         function [X_star, U_star] = optimize_trajectory(obj)

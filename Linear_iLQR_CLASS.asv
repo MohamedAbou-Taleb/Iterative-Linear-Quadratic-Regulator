@@ -1,0 +1,356 @@
+classdef Linear_iLQR_CLASS < handle
+    %LINEAR_ILQR_CLASS Summary of this class goes here
+    %   Detailed explanation goes here
+
+    properties
+        A
+        B
+        Q
+        R
+        Q_f
+    % Class for Linear Iterative Linear Quadratic Regulator (iLQR) 
+    % optimization. This class implements the iLQR algorithm for 
+    % trajectory optimization in linear systems. It defines the system 
+    % dynamics, cost functions, and methods for forward and backward 
+    % passes to compute optimal control inputs and state trajectories.
+
+    methods
+        function obj = Linear_iLQR_CLASS(args)
+            % Constructor for Linear_iLQR_CLASS
+            % Initializes the system parameters and preallocates arrays.
+            % 
+            % Inputs:
+            %   args - Structure containing the following fields:
+            %       A    - State transition matrix
+            %       B    - Control input matrix
+            %       Q    - State cost matrix
+            %       R    - Control cost matrix
+            %       Q_f  - Final state cost matrix
+            %       x_0  - Initial state
+            %       U_ff - Feedforward control inputs
+            %       dt   - Time step
+            %       T    - Total time for simulation
+            
+            arguments
+                args.A
+                args.B
+                args.Q
+                args.R
+                args.Q_f
+                args.x_0
+                args.U_ff
+                args.dt
+                args.T
+            end
+            % Assign validated values to object properties
+            props = fieldnames(args);
+            for k = 1:numel(props)
+                obj.(props{k}) = args.(props{k});
+            end
+            [obj.n_x, obj.n_u] = size(obj.B);
+            obj.tspan = 0:obj.dt:obj.T;
+            obj.N = length(obj.tspan) - 1;
+            obj.X = zeros(obj.n_x, obj.N+1);
+            obj.U = obj.U_ff;
+            for i = 1:obj.N
+                obj.K_cell_array{i} = zeros(obj.n_u, obj.n_x);
+            end
+        end
+
+        function [xkPlusOne, f_x, f_u] = f_fcn(obj, x, u)
+            % Computes the next state and the Jacobians of the state 
+            % transition function.
+            %
+            % Inputs:
+            %   x - Current state
+            %   u - Current control input
+            %
+            % Outputs:
+            %   xkPlusOne - Next state after applying control input
+            %   f_x       - Jacobian of the state transition with respect to x
+            %   f_u       - Jacobian of the state transition with respect to u
+            
+            xkPlusOne = obj.A*x + obj.B*u;
+            f_x = obj.A;
+            f_u = obj.B;
+        end
+
+        function [l, l_x, l_u, l_xx, l_ux, l_uu] = l_fcn(obj, x, u)
+            % Computes the stage cost and its derivatives.
+            %
+            % Inputs:
+            %   x - Current state
+            %   u - Current control input
+            %
+            % Outputs:
+            %   l      - Stage cost
+            %   l_x    - Gradient of the stage cost with respect to x
+            %   l_u    - Gradient of the stage cost with respect to u
+            %   l_xx   - Hessian of the stage cost with respect to x
+            %   l_ux   - Cross derivative of the stage cost
+            %   l_uu   - Hessian of the stage cost with respect to u
+            
+            l = ( 0.5 * x'*obj.Q*x + 0.5 * u'*obj.R*u ) * obj.dt;
+            l_x = x'*obj.Q*obj.dt;
+            l_u = u'*obj.R*obj.dt;
+            l_xx = obj.Q*obj.dt;
+            l_ux = zeros(size(obj.B))'*obj.dt;
+            l_uu = obj.R*obj.dt;
+        end
+        
+        function [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x)
+            % Computes the final cost and its derivatives.
+            %
+            % Inputs:
+            %   x - Final state
+            %
+            % Outputs:
+            %   l_f      - Final cost
+            %   l_f_x    - Gradient of the final cost with respect to x
+            %   l_f_xx   - Hessian of the final cost with respect to x
+            
+            l_f = 0.5 * x'*obj.Q_f*x;
+            l_f_x = x'*obj.Q_f;
+            l_f_xx = obj.Q_f;
+        end
+        
+        function [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = Q_fcn(obj, x, u, V_x, V_xx)
+            % Computes the derivatives of the cost-to-go function.
+            %
+            % Inputs:
+            %   x    - Current state
+            %   u    - Current control input
+            %   V_x  - Gradient of the value function
+            %   V_xx - Hessian of the value function
+            %
+            % Outputs:
+            %   Q_x   - Gradient of the cost-to-go with respect to x
+            %   Q_u   - Gradient of the cost-to-go with respect to u
+            %   Q_xx  - Hessian of the cost-to-go with respect to x
+            %   Q_ux  - Cross derivative of the cost-to-go
+            %   Q_uu  - Hessian of the cost-to-go with respect to u
+            
+            [l, l_x, l_u, l_xx, l_ux, l_uu] = obj.l_fcn(x, u);
+            [xkPlusOne, f_x, f_u] = obj.f_fcn(x, u);
+
+            Q_x = l_x + V_x*f_x;
+            Q_u = l_u + V_x*f_u;
+            Q_xx = l_xx + f_x'*V_xx*f_x;
+            Q_ux = l_ux + f_u'*V_xx*f_x;
+            Q_uu = l_uu + f_u'*V_xx*f_u;
+        end
+
+        function [u_ff, K, V_x_prev, V_xx_prev] = u_opt_fcn(obj, x, u, V_x, V_xx)
+            % Computes the optimal control input and feedback gain.
+            %
+            % Inputs:
+            %   x    - Current state
+            %   u    - Current control input
+            %   V_x  - Gradient of the value function
+            %   V_xx - Hessian of the value function
+            %
+            % Outputs:
+            %   u_ff         - Feedforward control input
+            %   K            - Feedback gain
+            %   V_x_prev     - Gradient of the value function for the previous step
+            %   V_xx_prev    - Hessian of the value function for the previous step
+            
+            [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = obj.Q_fcn(x, u, V_x, V_xx);
+            K = -Q_uu\Q_ux;
+            u_ff = -Q_uu\Q_u';
+            V_x_prev = Q_x + Q_u*K;
+            V_xx_prev = Q_xx + Q_ux'*K;
+        end
+        
+        function [X, U] = forward_pass(obj)
+            % Performs a forward pass through the system to compute the 
+            % state and control trajectories.
+            %
+            % Outputs:
+            %   X - State trajectory
+            %   U - Control trajectory
+            
+            X = zeros(obj.n_x, obj.N+1);
+            X(:, 1) = obj.x_0;
+
+            for k = 1:obj.N
+                xk = X(:, k);
+                xk_old = obj.X(:, k);
+                delta_x = xk - xk_old;
+                K = obj.K_cell_array{k};
+                uk = obj.U(:, k) + obj.U_ff(:, k) + K*delta_x;
+                xkPlusOne = obj.f_fcn(xk, uk);
+                X(:, k+1) = xkPlusOne;
+                obj.U(:, k) = uk;
+            end
+            obj.X = X;
+            U = obj.U;
+        end
+
+        function [X_star, U_star] = backward_pass(obj)
+            % Performs a backward pass through the system to compute the 
+            % optimal control inputs and feedback gains.
+            %
+            % Outputs:
+            %   X_star - Optimal state trajectory
+            %   U_star - Optimal control trajectory
+            
+            x = obj.X(:, end);
+            [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x);
+            V_x = l_f_x;
+            V_xx = l_f_xx;
+
+            for k = obj.N:-1:1
+                x = obj.X(:, k);
+                u = obj.U(:, k);
+                [u_ff, K, V_x_prev, V_xx_prev] = u_opt_fcn(obj, x, u, V_x, V_xx);
+                obj.U_ff(:, k) = u_ff;
+                obj.K_cell_array{k} = K;
+                V_x = V_x_prev;
+                V_xx = V_xx_prev;
+            end
+        end
+
+        function [X_star, U_star] = optimize_trajectory(obj)
+            % Optimizes the trajectory using the iLQR algorithm.
+            %
+            % Outputs:
+            %   X_star - Optimal state trajectory
+            %   U_star - Optimal control trajectory
+            
+            obj.forward_pass();
+            obj.backward_pass();
+            [X_star, U_star] = obj.forward_pass();
+        end
+    end        
+        dt
+        T
+        tspan
+        N
+        n_x
+        n_u
+        X
+        U
+        K_cell_array
+        U_ff
+        x_0
+    end
+
+    methods
+        function obj = Linear_iLQR_CLASS(args)
+            arguments
+                args.A
+                args.B
+                args.Q
+                args.R
+                args.Q_f
+                args.x_0
+                args.U_ff
+                args.dt
+                args.T
+            end
+            % Assign validated values to object properties
+            props = fieldnames(args);
+            for k = 1:numel(props)
+                obj.(props{k}) = args.(props{k});
+            end
+            [obj.n_x, obj.n_u] = size(obj.B);
+            obj.tspan = 0:obj.dt:obj.T;
+            obj.N = length(obj.tspan) - 1;
+            obj.X = zeros(obj.n_x, obj.N+1);
+            obj.U = obj.U_ff;
+            for i = 1:obj.N
+                obj.K_cell_array{i} = zeros(obj.n_u, obj.n_x);
+            end
+        end
+
+        function [xkPlusOne, f_x, f_u] = f_fcn(obj, x, u)
+            xkPlusOne = obj.A*x + obj.B*u;
+            f_x = obj.A;
+            f_u = obj.B;
+        end
+
+        function [l, l_x, l_u, l_xx, l_ux, l_uu] = l_fcn(obj, x, u)
+            %METHOD1 Summary of this method goes here
+            %   Detailed explanation goes here
+            l = ( 0.5 * x'*obj.Q*x + 0.5 * u'*obj.R*u ) * obj.dt;
+            l_x = x'*obj.Q*obj.dt;
+            l_u = u'*obj.R*obj.dt;
+            l_xx = obj.Q*obj.dt;
+            % l_ux = zeros(size(obj.B))*obj.dt;
+            l_ux = zeros(size(obj.B))'*obj.dt;
+            l_uu = obj.R*obj.dt;
+        end
+        
+        function [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x)
+            l_f = 0.5 * x'*obj.Q_f*x;
+            l_f_x = x'*obj.Q_f;
+            l_f_xx = obj.Q_f;
+        end
+        
+        function [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = Q_fcn(obj, x, u, V_x, V_xx)
+            [l, l_x, l_u, l_xx, l_ux, l_uu] = obj.l_fcn(x, u);
+            [xkPlusOne, f_x, f_u] = obj.f_fcn(x, u);
+
+            Q_x = l_x + V_x*f_x;
+            Q_u = l_u + V_x*f_u;
+            Q_xx = l_xx + f_x'*V_xx*f_x;
+            Q_ux = l_ux + f_u'*V_xx*f_x;
+            % Q_ux = l_ux' + f_u'*V_xx*f_x;
+            Q_uu = l_uu + f_u'*V_xx*f_u;
+        end
+
+        function [u_ff, K, V_x_prev, V_xx_prev] = u_opt_fcn(obj, x, u, V_x, V_xx)
+            [Q_x, Q_u, Q_xx, Q_ux, Q_uu] = obj.Q_fcn(x, u, V_x, V_xx);
+            K = -Q_uu\Q_ux;
+            u_ff = -Q_uu\Q_u';
+            % V_x_prev = Q_x + Q_u*K;
+            V_x_prev = Q_x + Q_u*K;
+            V_xx_prev = Q_xx + Q_ux'*K;
+        end
+        
+        function [X, U] = forward_pass(obj)
+            X = zeros(obj.n_x, obj.N+1);
+            X(:, 1) = obj.x_0;
+
+            for k = 1:obj.N
+                xk = X(:, k);
+                xk_old = obj.X(:, k);
+                delta_x = xk - xk_old;
+                K = obj.K_cell_array{k};
+                uk = obj.U(:, k) + obj.U_ff(:, k) + K*delta_x;
+                xkPlusOne = obj.f_fcn(xk, uk);
+                X(:, k+1) = xkPlusOne;
+                obj.U(:, k) = uk;
+            end
+            obj.X = X;
+            U = obj.U;
+        end
+
+        function [X_star, U_star] = backward_pass(obj)
+            x = obj.X(:, end);
+            [l_f, l_f_x, l_f_xx] = l_f_fcn(obj, x);
+            V_x = l_f_x;
+            V_xx = l_f_xx;
+
+            for k = obj.N:-1:1
+                x = obj.X(:, k);
+                u = obj.U(:, k);
+                [u_ff, K, V_x_prev, V_xx_prev] = u_opt_fcn(obj, x, u, V_x, V_xx);
+                obj.U_ff(:, k) = u_ff;
+                obj.K_cell_array{k} = K;
+                V_x = V_x_prev;
+                V_xx = V_xx_prev;
+            end
+
+            
+
+        end
+
+        function [X_star, U_star] = optimize_trajectory(obj)
+            obj.forward_pass();
+            obj.backward_pass();
+            [X_star, U_star] = obj.forward_pass();
+        end
+    end
+end
