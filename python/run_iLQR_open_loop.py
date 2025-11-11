@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import time
+# import casadi as ca
 
 # Import your custom classes from the other files
 from class_files.systems.system_base import System  # Base class
@@ -49,15 +50,12 @@ def main():
     
     # Instantiate the pendulum system
     # NOTE: We use 'euler' to match your original MATLAB f_fcn
-    # integrator = 'euler'
-    # integrator = 'midpoint'  # Alternative integrator option
-    integrator = 'rk4'       # Another integrator option
     pendulum_sys = MyPendulum(
         dt=dt,
         x_target=x_target,
         Q=Q, R=R, Q_f=Q_f,
         g=g, l=l, d=d,
-        integrator=integrator, # Match MATLAB's Euler integration
+        integrator='euler', # Match MATLAB's Euler integration
         use_jit=True
     )
     
@@ -71,13 +69,48 @@ def main():
         maxiter=maxiter
     )
 
+    # =========================================================================
+    # --- 2. JIT Warm-up ---
+    # =========================================================================
+    print("Warming up JIT-compiled functions...")
+    
+    # 1. Warm up the backward pass. This will compile the scan body
+    #    and all its dependencies (all system derivatives).
+    X_warmup = jnp.zeros_like(ilqr_solver.X)
+    U_warmup = jnp.zeros_like(ilqr_solver.U)
+    
+    # We need to block until compilation is done.
+    # We just grab the first output (U_ff) and block on it.
+    ilqr_solver.backward_pass(X_warmup, U_warmup)[0].block_until_ready()
+    
+    # 2. Warm up the forward pass.
+    U_ff_warmup = jnp.zeros_like(ilqr_solver.U_ff)
+    K_warmup = jnp.zeros_like(ilqr_solver.K)
+    
+    # Grab the first output (X_new) and block on it.
+    # Pass the x_0 argument
+    ilqr_solver.forward_pass(
+        ilqr_solver.x_0, 0.0, X_warmup, U_warmup, U_ff_warmup, K_warmup
+    )[0].block_until_ready()
+
+    print("Warm-up complete.")
+
+    # =========================================================================
+    # --- 3. Run iLQR Solver (Timed) ---
+    # =========================================================================
+    print("Running iLQR...")
+
     # Solve
+    # Now this timer only measures execution, not compilation.
     start_time_ilqr = time.time()
     X_bar, U_bar, cost_ilqr = ilqr_solver.optimize_trajectory()
     elapsed_time_ilqr = time.time() - start_time_ilqr
     
     print(f"Time taken to execute iLQR: {elapsed_time_ilqr:.4f} seconds")
 
+    # =========================================================================
+    # --- 4. Plotting ---
+    # =========================================================================
     print("Plotting results...")
     
     fig = plt.figure(figsize=(10, 8), facecolor='w')
@@ -115,7 +148,6 @@ def main():
     # Print final times
     print(f"\n--- Summary ---")
     print(f"iLQR solver time:      {elapsed_time_ilqr:.4f} seconds")
-    # print(f"CasADi solver time:    {elapsed_time_casadi:.4f} seconds")
 
 if __name__ == "__main__":
     main()

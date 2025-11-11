@@ -49,7 +49,7 @@ N_sim = length(tspan_sim)-1;
 X_sim = zeros(n_x, N_sim + 1);
 X_sim(:, 1) = x_0;
 U_sim = zeros(n_u, N_sim);
-
+start = tic;
 for k = 1:N_sim
     xk = X_sim(:, k);
     iLQR.x_0 = xk;
@@ -68,6 +68,8 @@ for k = 1:N_sim
     U_sim(:, k) = uk;
     X_sim(:, k+1) = xkPlusOne;
 end
+elapsed_time = toc(start);
+disp(['elapsed time for MPC simulation: ', num2str(elapsed_time), ' seconds'])
 %% --- 4. Plotting ---
 
 

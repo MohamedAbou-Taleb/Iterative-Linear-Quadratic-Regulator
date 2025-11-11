@@ -7,7 +7,7 @@ addpath(genpath(pwd))
 dt = 0.01;
 T = 4;
 tspan = 0:dt:T;
-N = length(tspan) - 1; 
+N = length(tspan) - 1;
 
 n = 2;
 m = 1;
@@ -41,9 +41,8 @@ iLQR= iLQR_CLASS( ...
     );
 
 startTime = tic; % Start timing
-for i = 1:1
-    iLQR.optimize_trajectory();
-end
+
+iLQR.optimize_trajectory();
 elapsedTime = toc(startTime); % Calculate elapsed time
 disp(['Time taken to execute: ', num2str(elapsedTime), ' seconds']);
 X_bar = iLQR.X;
@@ -74,7 +73,7 @@ for k = 1:N
     xk = X_bar_casadi(:, k);
     % Add stage cost (based on current state xk and control uk)
     cost = cost + pendulum_sys.l_fcn(xk, uk);
-    
+
     % Simulate the next state using the dynamics
     % This is now part of the cost/constraint graph, not a constraint itself
     xkPlusOne = pendulum_sys.f_fcn(xk, uk);
