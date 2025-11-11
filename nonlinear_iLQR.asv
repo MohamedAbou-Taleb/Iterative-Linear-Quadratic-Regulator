@@ -5,7 +5,7 @@ addpath(genpath(pwd))
 
 %%
 dt = 0.01;
-T = 4;
+T = 5;
 tspan = 0:dt:T;
 N = length(tspan) - 1; 
 
@@ -14,7 +14,7 @@ m = 1;
 
 g = 9.81;
 l = 1;
-d = 0;
+d = 0.01;
 Q = diag([1, 1]);
 R = eye(m);
 Q_f = eye(n)*0;
@@ -23,16 +23,15 @@ x_target = [pi;0];
 
 pendulum_sys = Pendulum_System_CLASS(g=g, l=l, d=d, dt=dt, Q=Q, R=R, Q_f=Q_f, x_target=x_target);
 
-x_0 = [1;0];
+x_0 = [0;0];
 
 
 
 U_ff = zeros(m, N);
 tol = 1e-6;
-maxiter = 1000;
+maxiter = 100;
 
 iLQR= iLQR_CLASS( ...
-    U_init=U_ff, ...
     T = T, ...
     x_0 = x_0, ...
     system=pendulum_sys, ...
@@ -73,11 +72,11 @@ for k = 1:N
     uk = U_bar_casadi(:, k);
     xk = X_bar_casadi(:, k);
     % Add stage cost (based on current state xk and control uk)
-    cost = cost + pendulum_sys.l_fcn(xk, uk);
+    cost = cost + pendulum_system.l_fcn(xk, uk);
     
     % Simulate the next state using the dynamics
     % This is now part of the cost/constraint graph, not a constraint itself
-    xkPlusOne = pendulum_sys.f_fcn(xk, uk);
+    xkPlusOne = pendulum_system.f_fcn(xk, uk);
     opti.subject_to( X_bar_casadi(:, k+1) == xkPlusOne )
 end
 
