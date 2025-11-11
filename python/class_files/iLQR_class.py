@@ -103,6 +103,7 @@ class iLQR:
         Q_ux = l_ux + f_u.T @ V_xx @ f_x
         Q_uu = l_uu + f_u.T @ V_xx @ f_u
         
+        print("Q_uu:", Q_uu)
         # TODO: Add regularization to Q_uu
         
         # --- 3. Solve for Gains (u_opt_fcn logic) ---
@@ -274,6 +275,7 @@ class iLQR:
             # 1. Backward pass
             #    This call is now JIT-compiled and runs the whole scan
             self.U_ff, self.K = self.backward_pass(self.X, self.U)
+            
             
             # 2. Line search
             alpha = 1.0
