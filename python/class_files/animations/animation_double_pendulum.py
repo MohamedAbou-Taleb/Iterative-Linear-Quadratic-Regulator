@@ -33,6 +33,21 @@ class AnimationDoublePendulum:
         
         return I_r_os_1, I_r_os_2
     
+    def compute_joint_positions(self, q):
+        q1 = q[0, :]
+        q2 = q[1, :]
+        
+        x1 = self.l1 * np.sin(q1)
+        y1 = -self.l1 * np.cos(q1)
+        
+        x2 = x1 + self.l2 * np.sin(q1 + q2)
+        y2 = y1 - self.l2 * np.cos(q1+ q2)
+
+        I_r_oj_1 = np.array([x1, y1, np.zeros(len(x1))])
+        I_r_oj_2 = np.array([x2, y2, np.zeros(len(x2))])
+        
+        return I_r_oj_1, I_r_oj_2
+    
     def compute_transformation_matrix(self, q_i):
         # stack into array for possible time-series q_i
         A_IB_i = np.array([[np.cos(q_i), -np.sin(q_i), 0.0],
@@ -42,104 +57,167 @@ class AnimationDoublePendulum:
     
     def compute_all_positions_and_orientations(self, q):
         I_r_os_1, I_r_os_2 = self.compute_positions(q)
+        I_r_oj_1, I_r_oj_2 = self.compute_joint_positions(q)
 
         A_IB_1 = np.array([self.compute_transformation_matrix(q_i) for q_i in q[0, :]])
         A_IB_2 = np.array([self.compute_transformation_matrix(q_i[0] + q_i[1]) for q_i in q.T])
 
-        return I_r_os_1, I_r_os_2, A_IB_1, A_IB_2
+        return I_r_os_1, I_r_os_2, I_r_oj_1, I_r_oj_2, A_IB_1, A_IB_2
     
     def create_environment(self):
-        self.pend_1 = vtk.vtkCubeSource()
-        self.pend_1.SetXLength(self.width1)
-        self.pend_1.SetYLength(self.l1)
-        self.pend_1.SetZLength(self.height1)
+            self.pend_1 = vtk.vtkCubeSource()
+            self.pend_1.SetXLength(self.width1)
+            self.pend_1.SetYLength(self.l1)
+            self.pend_1.SetZLength(self.height1)
 
-        self.H_IB_1 = vtk.vtkMatrix4x4()
-        _H_IB_1 = vtk.vtkMatrixToLinearTransform()
-        _H_IB_1.SetInput(self.H_IB_1)
-        tf_filter_1 = vtk.vtkTransformPolyDataFilter()
-        tf_filter_1.SetInputConnection(self.pend_1.GetOutputPort())
-        tf_filter_1.SetTransform(_H_IB_1)
+            self.H_IB_1 = vtk.vtkMatrix4x4()
+            _H_IB_1 = vtk.vtkMatrixToLinearTransform()
+            _H_IB_1.SetInput(self.H_IB_1)
+            tf_filter_1 = vtk.vtkTransformPolyDataFilter()
+            tf_filter_1.SetInputConnection(self.pend_1.GetOutputPort())
+            tf_filter_1.SetTransform(_H_IB_1)
 
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(tf_filter_1.GetOutputPort())
-        self.actor_1 = vtk.vtkActor()
-        self.actor_1.SetMapper(mapper)
-        self.actor_1.GetProperty().SetColor([82/255, 108/255, 164/255])  # Blue color
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(tf_filter_1.GetOutputPort())
+            self.actor_1 = vtk.vtkActor()
+            self.actor_1.SetMapper(mapper)
+            self.actor_1.GetProperty().SetColor([57/255, 49/255, 133/255])  # Blue color
 
-        self.floor = vtk.vtkCubeSource()
-        self.floor.SetXLength(0.2)
-        self.floor.SetYLength(0.05)
-        self.floor.SetZLength(0.2)
+            self.floor = vtk.vtkCubeSource()
+            self.floor.SetXLength(0.2)
+            self.floor.SetYLength(0.05)
+            self.floor.SetZLength(0.2)
 
-        self.H_IB_floor = vtk.vtkMatrix4x4()
-        _H_IB_floor = vtk.vtkMatrixToLinearTransform()
-        _H_IB_floor.SetInput(self.H_IB_floor)
-        tf_filter_floor = vtk.vtkTransformPolyDataFilter()
-        tf_filter_floor.SetInputConnection(self.floor.GetOutputPort())
-        tf_filter_floor.SetTransform(_H_IB_floor)
 
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(tf_filter_floor.GetOutputPort())
-        self.actor_floor = vtk.vtkActor()
-        self.actor_floor.SetMapper(mapper)
+            self.H_IB_floor = vtk.vtkMatrix4x4()
+            _H_IB_floor = vtk.vtkMatrixToLinearTransform()
+            _H_IB_floor.SetInput(self.H_IB_floor)
+            tf_filter_floor = vtk.vtkTransformPolyDataFilter()
+            tf_filter_floor.SetInputConnection(self.floor.GetOutputPort())
+            tf_filter_floor.SetTransform(_H_IB_floor)
 
-        # Pendulum 2
-        self.pend_2 = vtk.vtkCubeSource()
-        self.pend_2.SetXLength(self.width2)
-        self.pend_2.SetYLength(self.l2)
-        self.pend_2.SetZLength(self.height2)
-        self.H_IB_2 = vtk.vtkMatrix4x4()
-        _H_IB_2 = vtk.vtkMatrixToLinearTransform()
-        _H_IB_2.SetInput(self.H_IB_2)
-        tf_filter_2 = vtk.vtkTransformPolyDataFilter()
-        tf_filter_2.SetInputConnection(self.pend_2.GetOutputPort())
-        tf_filter_2.SetTransform(_H_IB_2)
-        mapper2 = vtk.vtkPolyDataMapper()
-        mapper2.SetInputConnection(tf_filter_2.GetOutputPort())
-        self.actor_2 = vtk.vtkActor()
-        self.actor_2.SetMapper(mapper2)
-        # Renderer
-        self.renderer = vtk.vtkRenderer()
-        self.renderer.AddActor(self.actor_1)
-        self.renderer.AddActor(self.actor_2)
-        self.renderer.AddActor(self.actor_floor)
-        self.renderer.SetBackground(vtk.vtkNamedColors().GetColor3d("DarkGreen")) # White background
-        # Render Window
-        self.render_window = vtk.vtkRenderWindow()
-        self.render_window.AddRenderer(self.renderer)
-        self.render_window.MakeRenderWindowInteractor()   
-        self.render_window.SetSize(800, 600)
-        # Interactor
-        self.interactor = self.render_window.GetInteractor()
-        self.cam_widget = vtk.vtkCameraOrientationWidget()
-        self.cam_widget.SetParentRenderer(self.renderer)
-        self.cam_widget.On()
-        self.camera = self.renderer.GetActiveCamera()
-        self.camera.SetPosition(0, 1, 10)
-    
+            mapper = vtk.vtkPolyDataMapper()
+            mapper.SetInputConnection(tf_filter_floor.GetOutputPort())
+            self.actor_floor = vtk.vtkActor()
+            self.actor_floor.SetMapper(mapper)
+            self.actor_floor.GetProperty().SetColor([0,0,0])  
+
+            # Pendulum 2
+            self.pend_2 = vtk.vtkCubeSource()
+            self.pend_2.SetXLength(self.width2)
+            self.pend_2.SetYLength(self.l2)
+            self.pend_2.SetZLength(self.height2)
+
+            self.H_IB_2 = vtk.vtkMatrix4x4()
+            _H_IB_2 = vtk.vtkMatrixToLinearTransform()
+            _H_IB_2.SetInput(self.H_IB_2)
+
+            tf_filter_2 = vtk.vtkTransformPolyDataFilter()
+            tf_filter_2.SetInputConnection(self.pend_2.GetOutputPort())
+            tf_filter_2.SetTransform(_H_IB_2)
+
+            mapper2 = vtk.vtkPolyDataMapper()
+            mapper2.SetInputConnection(tf_filter_2.GetOutputPort())
+            
+            self.actor_2 = vtk.vtkActor()
+            self.actor_2.SetMapper(mapper2)
+            self.actor_2.GetProperty().SetColor([199/255, 33/255, 37/255])  # Red color
+
+            # Use spheres for joints
+            self.joint_sphere_1 = vtk.vtkSphereSource()
+            self.joint_sphere_1.SetRadius(self.width1 * 1.2)
+            self.joint_sphere_1.SetThetaResolution(16)
+            self.joint_sphere_1.SetPhiResolution(16)
+
+            self.H_IB_joint_1 = vtk.vtkMatrix4x4()
+            _H_IB_joint_1 = vtk.vtkMatrixToLinearTransform()
+            _H_IB_joint_1.SetInput(self.H_IB_joint_1)
+
+            tf_filter_joint_1 = vtk.vtkTransformPolyDataFilter()
+            tf_filter_joint_1.SetInputConnection(self.joint_sphere_1.GetOutputPort())
+            tf_filter_joint_1.SetTransform(_H_IB_joint_1)
+
+            joint_mapper_1 = vtk.vtkPolyDataMapper()
+            joint_mapper_1.SetInputConnection(tf_filter_joint_1.GetOutputPort()) # <-- CORRECTED
+
+            self.joint_actor_1 = vtk.vtkActor()
+            self.joint_actor_1.SetMapper(joint_mapper_1)
+            self.joint_actor_1.GetProperty().SetColor([0, 0, 0])  # Black color
+
+            self.joint_sphere_2 = vtk.vtkSphereSource()
+            self.joint_sphere_2.SetRadius(self.width2 * 1.2)
+            self.joint_sphere_2.SetThetaResolution(16)
+            self.joint_sphere_2.SetPhiResolution(16)
+            
+            self.H_IB_joint_2 = vtk.vtkMatrix4x4()
+            _H_IB_joint_2 = vtk.vtkMatrixToLinearTransform()
+            _H_IB_joint_2.SetInput(self.H_IB_joint_2)
+            
+            tf_filter_joint_2 = vtk.vtkTransformPolyDataFilter()
+            tf_filter_joint_2.SetInputConnection(self.joint_sphere_2.GetOutputPort())
+            tf_filter_joint_2.SetTransform(_H_IB_joint_2) # <-- ADDED MISSING LINE
+
+            self.joint_mapper_2 = vtk.vtkPolyDataMapper()
+            self.joint_mapper_2.SetInputConnection(tf_filter_joint_2.GetOutputPort()) # <-- CORRECTED
+            
+            self.joint_actor_2 = vtk.vtkActor()
+            self.joint_actor_2.SetMapper(self.joint_mapper_2)
+            self.joint_actor_2.GetProperty().SetColor([0, 0, 0])  # Black color
+
+            
+            # Renderer
+            self.renderer = vtk.vtkRenderer()
+            self.renderer.AddActor(self.actor_1)
+            self.renderer.AddActor(self.actor_2)
+            self.renderer.AddActor(self.actor_floor)
+            self.renderer.AddActor(self.joint_actor_1)
+            self.renderer.AddActor(self.joint_actor_2)
+
+            self.renderer.SetBackground(1,1,1) # White background
+            
+            # Render Window
+            self.render_window = vtk.vtkRenderWindow()
+            self.render_window.AddRenderer(self.renderer)
+            self.render_window.MakeRenderWindowInteractor()   
+            self.render_window.SetSize(800, 600)
+            
+            # Interactor
+            self.interactor = self.render_window.GetInteractor()
+            self.cam_widget = vtk.vtkCameraOrientationWidget()
+            self.cam_widget.SetParentRenderer(self.renderer)
+            self.cam_widget.On()
+            self.camera = self.renderer.GetActiveCamera()
+            self.camera.SetPosition(0, 1, 8)
     def animate(self):
         
-        I_r_os_1, I_r_os_2, A_IB_1, A_IB_2 = self.compute_all_positions_and_orientations(self.q)
+        I_r_os_1, I_r_os_2, I_r_oj_1, I_r_oj_2, A_IB_1, A_IB_2 = self.compute_all_positions_and_orientations(self.q)
         self.create_environment()
         i=0
         while True:
             # Pendulum 1
             r = I_r_os_1[:, i]
+            r_j = I_r_oj_1[:, i]
             A = A_IB_1[i, :, :]
             for k in range(3):
                 self.H_IB_1.SetElement(k, 3, r[k])
+                self.H_IB_joint_1.SetElement(k, 3, r_j[k])
                 for j in range(3):
                     self.H_IB_1.SetElement(k, j, A[k, j])
+                    self.H_IB_joint_1.SetElement(k, j, A[k, j])
             self.H_IB_1.Modified()
+            self.H_IB_joint_1.Modified()
     
             r = I_r_os_2[:, i]
+            r_j = I_r_oj_2[:, i]
             A = A_IB_2[i, :, :]
             for k in range(3):
                 self.H_IB_2.SetElement(k, 3, r[k])
+                self.H_IB_joint_2.SetElement(k, 3, r_j[k])
                 for j in range(3):
                     self.H_IB_2.SetElement(k, j, A[k, j])
+                    self.H_IB_joint_2.SetElement(k, j, A[k, j])
             self.H_IB_2.Modified()
+            self.H_IB_joint_2.Modified()
 
             self.render_window.Render()
             self.interactor.ProcessEvents()
