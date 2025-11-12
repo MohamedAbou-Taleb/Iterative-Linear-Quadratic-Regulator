@@ -68,9 +68,9 @@ class AnimationDoublePendulum:
         self.actor_1.GetProperty().SetColor([82/255, 108/255, 164/255])  # Blue color
 
         self.floor = vtk.vtkCubeSource()
-        self.floor.SetXLength(1)
-        self.floor.SetYLength(0.001)
-        self.floor.SetZLength(1)
+        self.floor.SetXLength(0.2)
+        self.floor.SetYLength(0.05)
+        self.floor.SetZLength(0.2)
 
         self.H_IB_floor = vtk.vtkMatrix4x4()
         _H_IB_floor = vtk.vtkMatrixToLinearTransform()

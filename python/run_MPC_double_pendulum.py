@@ -46,7 +46,7 @@ def main():
     theta2 = (1/12) * m2 * l2**2
     
     # Cost parameters
-    Q = jnp.diag(jnp.array([10.0, 10.0, 0.1, 0.1]))
+    Q = jnp.diag(jnp.array([1.0, 2.0, 0.1, 0.1]))
     R = jnp.diag(jnp.array([0.1, 0.1]))
     Q_f = jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0]))
     
@@ -175,9 +175,6 @@ def main():
     print(f"Average time per step: {elapsed_time_mpc / N_sim:.5f} seconds")
 
 
-    anim = AnimationDoublePendulum(pendulum_sys_sim, X_sim, tspan_sim, dt)
-    anim.animate()
-
     # =========================================================================
     # --- 5. Plotting ---
     # =========================================================================
@@ -230,6 +227,9 @@ def main():
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     plt.show()
+
+    anim = AnimationDoublePendulum(pendulum_sys_sim, X_sim, tspan_sim, dt)
+    anim.animate()
 
 if __name__ == "__main__":
     main()
