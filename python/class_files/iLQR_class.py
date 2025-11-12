@@ -20,7 +20,7 @@ class iLQR:
                  T: float,
                  x_0: jnp.ndarray,
                  U_init: jnp.ndarray,
-                 tol: float = 1e-6,
+                 tol: float = 1e-5,
                  maxiter: int = 100,
                  alpha_factor: float = 0.5,
                  min_alpha: float = 1e-8,
@@ -103,8 +103,6 @@ class iLQR:
         Q_ux = l_ux + f_u.T @ V_xx @ f_x
         Q_uu = l_uu + f_u.T @ V_xx @ f_u
         
-        print("Q_uu:", Q_uu)
-        # TODO: Add regularization to Q_uu
         
         # --- 3. Solve for Gains (u_opt_fcn logic) ---
         # Note: Using solve is more stable than inv
@@ -288,7 +286,7 @@ class iLQR:
                     self.x_0, alpha, self.X, self.U, self.U_ff, self.K
                 )
                 
-                if cost_new < cost:
+                if cost_new <= cost:
                     # Accept step
                     self.X = X_new
                     self.U = U_new

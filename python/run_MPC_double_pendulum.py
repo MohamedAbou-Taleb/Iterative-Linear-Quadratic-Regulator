@@ -16,12 +16,13 @@ def main():
     dt = 0.01
     
     # --- MPC Horizon Settings ---
-    T_horizon = 2.0  # Time horizon for each MPC solve
+    # T_horizon = 0.5  # Time horizon for each MPC solve
+    T_horizon = 1  # Time horizon for each MPC solve
     tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
     N_horizon = len(tspan_horizon) - 1
     
     # --- Simulation Settings ---
-    T_sim = 10.0 # Total simulation time
+    T_sim = 5.0 # Total simulation time
     tspan_sim = jnp.arange(0, T_sim + dt, dt)
     N_sim = len(tspan_sim) - 1
     
@@ -46,19 +47,19 @@ def main():
     # Cost parameters
     Q = jnp.diag(jnp.array([10.0, 10.0, 0.1, 0.1]))
     R = jnp.diag(jnp.array([0.1, 0.1]))
-    Q_f = jnp.diag(jnp.array([1000.0, 1000.0, 100.0, 100.0]))
+    Q_f = jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0]))
     
     # Target: "up-up" position
     x_target = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
     # Initial state: "down-down" position
-    x_0 = jnp.array([jnp.pi/2, 0.0, 0.0, 0.0])
+    x_0 = jnp.array([0, 0.0, 0.0, 0.0])
     
     # Initial control guess for the *first* solve
     U_init = jnp.zeros((n_u, N_horizon))
     
     # Solver settings
-    tol = 1e-6
-    maxiter = 10 # Low maxiter for MPC speed
+    tol = 1e-5
+    maxiter = 50 # Low maxiter for MPC speed
     
     # =========================================================================
     # --- 2. Initialize System and Solver ---
