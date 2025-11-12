@@ -7,6 +7,7 @@ import time
 from class_files.systems.system_base import System
 from class_files.systems.double_pendulum_sys import MyDoublePendulum
 from class_files.iLQR_class import iLQR
+from class_files.animations.animation_double_pendulum import AnimationDoublePendulum
 
 def main():
     # =========================================================================
@@ -22,7 +23,7 @@ def main():
     N_horizon = len(tspan_horizon) - 1
     
     # --- Simulation Settings ---
-    T_sim = 5.0 # Total simulation time
+    T_sim = 3.0 # Total simulation time
     tspan_sim = jnp.arange(0, T_sim + dt, dt)
     N_sim = len(tspan_sim) - 1
     
@@ -52,7 +53,7 @@ def main():
     # Target: "up-up" position
     x_target = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
     # Initial state: "down-down" position
-    x_0 = jnp.array([0, 0.0, 0.0, 0.0])
+    x_0 = jnp.array([0.0, 0.0, -10.0, 10.0])
     
     # Initial control guess for the *first* solve
     U_init = jnp.zeros((n_u, N_horizon))
@@ -172,6 +173,10 @@ def main():
     print(f"MPC simulation finished.")
     print(f"Total MPC time: {elapsed_time_mpc:.4f} seconds")
     print(f"Average time per step: {elapsed_time_mpc / N_sim:.5f} seconds")
+
+
+    anim = AnimationDoublePendulum(pendulum_sys_sim, X_sim, tspan_sim, dt)
+    anim.animate()
 
     # =========================================================================
     # --- 5. Plotting ---

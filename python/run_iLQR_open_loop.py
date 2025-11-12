@@ -40,7 +40,7 @@ def main():
     U_init = jnp.zeros((m, N))
     
     # Solver settings
-    tol = 1e-6
+    tol = 1e-5
     maxiter = 100 # Reduced from 1000 for faster demo
     
     # =========================================================================

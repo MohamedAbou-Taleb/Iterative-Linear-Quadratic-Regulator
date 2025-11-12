@@ -47,7 +47,7 @@ def main():
     U_init = jnp.zeros((n_u, N_horizon))
     
     # Solver settings
-    tol = 1e-6
+    tol = 1e-5
     maxiter = 10 # Low maxiter for MPC
     
     # =========================================================================
@@ -83,7 +83,7 @@ def main():
         U_init=U_init,
         tol=tol,
         maxiter=maxiter,
-        verbose=False # <-- Set to False for silent operation in MPC loop
+        verbose=True # <-- Set to False for silent operation in MPC loop
     )
 
     # =========================================================================

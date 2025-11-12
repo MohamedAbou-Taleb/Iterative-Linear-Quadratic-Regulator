@@ -16,6 +16,7 @@ setup(
         'numpy',
         'jax',
         'matplotlib',
+        'vtk',
         # e.g., 'pandas', 'numpy'
     ],
     
