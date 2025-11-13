@@ -294,44 +294,82 @@ class AnimationDoublePendulum:
                 resolution=(1920, 1080), 
                 bitrate=4000000):
         
-        # 1. Create all VTK actors FIRST
+        # 1. Create environment
         self.create_environment()
-        
-        # 2. NOW it is safe to set the size
         self.render_window.SetSize(resolution[0], resolution[1])
-        
-        # 3. Set the scene to the initial state
-        self.set_scene_to_timestep(0)
-        self.render_window.Render()
-        
-        # --- VIDEO RECORDING SETUP ---
         self.recording = save_video
+
+        # --- MODE A: HIGH QUALITY VIDEO RECORDING (OFFLINE RENDER) ---
         if self.recording:
-            print(f"Initializing video writer: {filename} at {resolution[0]}x{resolution[1]}")
+            print(f"--- STARTING SMOOTH OFFLINE RENDER ---")
+            print(f"Target: {filename} | {resolution[0]}x{resolution[1]}")
+            
+            # Setup Filter
             self.window_to_image_filter = vtk.vtkWindowToImageFilter()
             self.window_to_image_filter.SetInput(self.render_window)
             self.window_to_image_filter.SetInputBufferTypeToRGB()
             self.window_to_image_filter.ReadFrontBufferOff()
-            self.window_to_image_filter.Update()
             
-            w, h = self.render_window.GetSize()
-            fps = int(1.0 / self.dt)
+            # --- SMOOTHNESS FIX ---
+            # We force the video to be standard 60 FPS.
+            # This matches standard monitors, eliminating stutter.
+            video_fps = 60 
+            
             fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-            
-            self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h), isColor=True)
+            self.video_writer = cv2.VideoWriter(filename, fourcc, video_fps, 
+                                              self.render_window.GetSize(), isColor=True)
             self.video_writer.set(cv2.CAP_PROP_BITRATE, bitrate) 
 
-        # 4. Add the callback function
-        self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
-        
-        # 5. Create the repeating timer
-        timer_interval_ms = int(self.dt * 1000)
-        self.interactor.CreateRepeatingTimer(timer_interval_ms)
-        
-        # 6. Start interaction
-        print(f"Starting animation loop with dt = {self.dt}s.")
-        self.interactor.Initialize()
-        self.interactor.Start()
+            # Calculate total duration of the simulation
+            total_sim_time = self.N * self.dt
+            
+            # Calculate how many frames the VIDEO needs to fill that time at 60fps
+            total_video_frames = int(total_sim_time * video_fps)
+            
+            print(f"Resampling data: Converting {self.N} sim steps -> {total_video_frames} video frames.")
+
+            # --- THE RENDER LOOP ---
+            for k in range(total_video_frames):
+                # 1. Calculate the exact time we want to render for this video frame
+                t_target = k / video_fps
+                
+                # 2. Find the nearest corresponding index in the simulation data
+                #    (This performs the 'resampling' to keep it real-time)
+                idx = int(round(t_target / self.dt))
+                
+                # Safety check to ensure we don't go out of bounds
+                if idx >= self.N:
+                    idx = self.N - 1
+
+                # 3. Update Scene
+                self.timestep_index = idx
+                self.text_actor.SetInput(f"t = {t_target:.2f} s")
+                self.set_scene_to_timestep(idx)
+                
+                # 4. Render & Save
+                self.render_window.Render()
+                self.write_video_frame()
+                
+                # Progress bar
+                if k % (total_video_frames // 10) == 0:
+                    percent = (k / total_video_frames) * 100
+                    print(f"Rendering: {percent:.0f}% complete")
+
+            self.video_writer.release()
+            print("--- VIDEO SAVED SUCCESSFULLY ---")
+            self.render_window.Finalize()
+            self.interactor.TerminateApp()
+
+        # --- MODE B: LIVE PREVIEW ---
+        else:
+            print("--- STARTING LIVE PREVIEW ---")
+            self.set_scene_to_timestep(0)
+            self.render_window.Render()
+            self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
+            timer_interval_ms = int(self.dt * 1000)
+            self.interactor.CreateRepeatingTimer(timer_interval_ms)
+            self.interactor.Initialize()
+            self.interactor.Start()
 
 if __name__ == "__main__":
     # Example usage
