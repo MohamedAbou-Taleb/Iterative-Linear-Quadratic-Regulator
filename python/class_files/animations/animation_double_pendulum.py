@@ -1,9 +1,10 @@
 import vtk
-# from time import sleep # No longer needed
 import numpy as np
+import cv2
+from vtk.util import numpy_support
 
 class AnimationDoublePendulum:
-    
+    # ... (your existing __init__, compute_positions, etc. methods) ...
     def __init__(self, double_pendulum_sys, X_data, tspan, dt):
         self.double_pendulum_sys = double_pendulum_sys
         self.l1 = double_pendulum_sys.l1
@@ -21,9 +22,11 @@ class AnimationDoublePendulum:
 
         # --- State for the animation callback ---
         self.timestep_index = 0
+        self.recording = False
+        self.video_writer = None
+        self.window_to_image_filter = None
 
         # --- Pre-compute all positions and orientations ---
-        # This is expensive, so we do it only once at the start.
         print("Pre-computing trajectories...")
         self.I_r_os_1, self.I_r_os_2, self.I_r_oj_1, self.I_r_oj_2, self.A_IB_1, self.A_IB_2 = self.compute_all_positions_and_orientations(self.q)
         print("Computation complete.")
@@ -37,7 +40,6 @@ class AnimationDoublePendulum:
         self.H_IB_joint_1 = vtk.vtkMatrix4x4()
         self.H_IB_joint_2 = vtk.vtkMatrix4x4()
         self.H_IB_floor = vtk.vtkMatrix4x4()
-
 
     def compute_positions(self, q):
         q1 = q[0, :]
@@ -70,10 +72,9 @@ class AnimationDoublePendulum:
         return I_r_oj_1, I_r_oj_2
     
     def compute_transformation_matrix(self, q_i):
-        # stack into array for possible time-series q_i
         A_IB_i = np.array([[np.cos(q_i), -np.sin(q_i), 0.0],
-                               [np.sin(q_i),  np.cos(q_i), 0.0],
-                               [0.0,          0.0,         1.0]])
+                           [np.sin(q_i),  np.cos(q_i), 0.0],
+                           [0.0,          0.0,         1.0]])
         return A_IB_i
     
     def compute_all_positions_and_orientations(self, q):
@@ -102,7 +103,7 @@ class AnimationDoublePendulum:
             mapper.SetInputConnection(tf_filter_1.GetOutputPort())
             actor_1 = vtk.vtkActor()
             actor_1.SetMapper(mapper)
-            actor_1.GetProperty().SetColor([57/255, 49/255, 133/255])  # Blue color
+            actor_1.GetProperty().SetColor([57/255, 49/255, 133/255]) 
 
             # Floor
             floor = vtk.vtkCubeSource()
@@ -139,7 +140,7 @@ class AnimationDoublePendulum:
             
             actor_2 = vtk.vtkActor()
             actor_2.SetMapper(mapper2)
-            actor_2.GetProperty().SetColor([199/255, 33/255, 37/255])  # Red color
+            actor_2.GetProperty().SetColor([199/255, 33/255, 37/255]) 
 
             # Joint 1
             joint_sphere_1 = vtk.vtkSphereSource()
@@ -154,10 +155,10 @@ class AnimationDoublePendulum:
             tf_filter_joint_1.SetTransform(_H_IB_joint_1)
 
             joint_mapper_1 = vtk.vtkPolyDataMapper()
-            joint_mapper_1.SetInputConnection(tf_filter_joint_1.GetOutputPort()) # Your fix
+            joint_mapper_1.SetInputConnection(tf_filter_joint_1.GetOutputPort())
             joint_actor_1 = vtk.vtkActor()
             joint_actor_1.SetMapper(joint_mapper_1)
-            joint_actor_1.GetProperty().SetColor([0, 0, 0])  # Black color
+            joint_actor_1.GetProperty().SetColor([0, 0, 0]) 
 
             # Joint 2
             joint_sphere_2 = vtk.vtkSphereSource()
@@ -169,14 +170,14 @@ class AnimationDoublePendulum:
             _H_IB_joint_2.SetInput(self.H_IB_joint_2)
             tf_filter_joint_2 = vtk.vtkTransformPolyDataFilter()
             tf_filter_joint_2.SetInputConnection(joint_sphere_2.GetOutputPort())
-            tf_filter_joint_2.SetTransform(_H_IB_joint_2) # Your fix
+            tf_filter_joint_2.SetTransform(_H_IB_joint_2)
 
             joint_mapper_2 = vtk.vtkPolyDataMapper()
-            joint_mapper_2.SetInputConnection(tf_filter_joint_2.GetOutputPort()) # Your fix
+            joint_mapper_2.SetInputConnection(tf_filter_joint_2.GetOutputPort())
             
             joint_actor_2 = vtk.vtkActor()
             joint_actor_2.SetMapper(joint_mapper_2)
-            joint_actor_2.GetProperty().SetColor([0, 0, 0])  # Black color
+            joint_actor_2.GetProperty().SetColor([0, 0, 0]) 
 
             
             # --- Renderer setup ---
@@ -186,16 +187,16 @@ class AnimationDoublePendulum:
             self.renderer.AddActor(actor_floor)
             self.renderer.AddActor(joint_actor_1)
             self.renderer.AddActor(joint_actor_2)
-            self.renderer.SetBackground(1,1,1) # White background
+            self.renderer.SetBackground(1,1,1) 
             
             # --- Render Window setup ---
             self.render_window = vtk.vtkRenderWindow()
+            # self.render_window.SetSize(800, 600) # This will be set by animate method
             self.render_window.AddRenderer(self.renderer)
-            self.render_window.SetSize(800, 600)
             
             # --- Interactor setup ---
             self.interactor = vtk.vtkRenderWindowInteractor()
-            self.interactor.SetRenderWindow(self.render_window) # Link interactor to window
+            self.interactor.SetRenderWindow(self.render_window)
             
             # --- Camera setup ---
             self.cam_widget = vtk.vtkCameraOrientationWidget()
@@ -205,8 +206,6 @@ class AnimationDoublePendulum:
             camera.SetPosition(0, 1, 8)
 
     def set_scene_to_timestep(self, i):
-        """Helper function to update all VTK transforms for a given timestep index."""
-        
         # Pendulum 1
         r = self.I_r_os_1[:, i]
         r_j = self.I_r_oj_1[:, i]
@@ -233,75 +232,101 @@ class AnimationDoublePendulum:
         self.H_IB_2.Modified()
         self.H_IB_joint_2.Modified()
     
+    def write_video_frame(self):
+        """Captures the current render window and writes it to the video file."""
+        if self.recording and self.video_writer is not None:
+            self.window_to_image_filter.Modified()
+            self.window_to_image_filter.Update()
+            
+            vtk_image = self.window_to_image_filter.GetOutput()
+            width, height, _ = vtk_image.GetDimensions()
+            
+            vtk_array = vtk_image.GetPointData().GetScalars()
+            components = vtk_array.GetNumberOfComponents()
+            
+            arr = numpy_support.vtk_to_numpy(vtk_array).reshape(height, width, components)
+            arr = np.flip(arr, 0)
+            arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            
+            self.video_writer.write(arr)
+
     def update_scene_callback(self, interactor, event):
-        """This is the callback function for the TimerEvent."""
-        
-        # Increment the timestep index and loop around if at the end
         self.timestep_index = (self.timestep_index + 1) % self.N
         
-        # Update all the transforms in the scene
         self.set_scene_to_timestep(self.timestep_index)
-        
-        # Trigger a re-render
-        # Note: Often the interactor handles this, but explicit Render() is safer.
         self.render_window.Render()
 
-    def animate(self):
-        """Replaces the old 'animate' method, now named 'animate' again for compatibility.
-        Sets up the VTK environment and starts the interactor loop.
-        """
-        
-        # 1. Create all VTK actors, mappers, renderers, etc.
-        self.create_environment()
-        
-        # 2. Set the scene to the initial state (t=0)
-        self.set_scene_to_timestep(0)
-        
-        # --- FIX: Add an initial Render() call ---
-        # This ensures the window is drawn once before the interactor starts.
-        self.render_window.Render()
-        
-        # 3. Add the callback function to the interactor's TimerEvent
-        # --- FIX: Use vtk.vtkCommand.TimerEvent for robustness ---
-        self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
-        
-        # 4. Create the repeating timer
-        # The interval is in milliseconds
-        timer_interval_ms = int(self.dt * 1000)
-        
-        # VTK timers can be imprecise at < 10ms. 
-        # If dt is very small, the animation might run slower than real-time
-        # simply because rendering takes longer than dt.
-        if timer_interval_ms < 10:
-             print(f"Warning: Timer interval is {timer_interval_ms}ms. "
-                   "Animation may not run in real-time if rendering is slow.")
-             # You might want to enforce a minimum interval
-             # timer_interval_ms = 10 
-        
-        self.interactor.CreateRepeatingTimer(timer_interval_ms)
-        
-        # 5. Initialize and start the interactor
-        # This is a blocking call. The animation will run until you close the window.
-        print(f"Starting animation loop with dt = {self.dt}s ({timer_interval_ms}ms interval).")
-        self.interactor.Initialize()
-        self.interactor.Start()
+        if self.recording:
+            self.write_video_frame()
+            
+            if self.timestep_index == 0:
+                print("Simulation loop finished. Saving video...")
+                self.recording = False
+                self.video_writer.release()
+                self.video_writer = None
+                print("Video saved successfully.")
+                # You might want to exit the interactor here
+                # self.interactor.Exit() # Uncomment if you want to close window automatically after saving
 
+    def animate(self, save_video=False, filename="double_pendulum.mp4", 
+                    resolution=(1920, 1080), 
+                    bitrate=4000000):
+            
+            # 1. Create all VTK actors, mappers, renderers, and the render_window FIRST
+            self.create_environment()
+            
+            # 2. NOW it is safe to set the size, because render_window exists
+            self.render_window.SetSize(resolution[0], resolution[1])
+            
+            # 3. Set the scene to the initial state (t=0)
+            self.set_scene_to_timestep(0)
+            self.render_window.Render()
+            
+            # --- VIDEO RECORDING SETUP ---
+            self.recording = save_video
+            if self.recording:
+                print(f"Initializing video writer: {filename} at {resolution[0]}x{resolution[1]}")
+                self.window_to_image_filter = vtk.vtkWindowToImageFilter()
+                self.window_to_image_filter.SetInput(self.render_window)
+                self.window_to_image_filter.SetInputBufferTypeToRGB()
+                self.window_to_image_filter.ReadFrontBufferOff()
+                self.window_to_image_filter.Update()
+                
+                w, h = self.render_window.GetSize()
+                fps = int(1.0 / self.dt)
+                fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
+                
+                # Initialize VideoWriter
+                self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h), isColor=True)
+                
+                # Note: Setting bitrate via 'set' is codec-dependent and may not always take effect 
+                # with standard opencv backends, but increasing resolution is the primary quality factor.
+                self.video_writer.set(cv2.CAP_PROP_BITRATE, bitrate) 
+
+            # 4. Add the callback function
+            self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
+            
+            # 5. Create the repeating timer
+            timer_interval_ms = int(self.dt * 1000)
+            if timer_interval_ms < 10:
+                print(f"Warning: Timer interval {timer_interval_ms}ms is very fast. Video encoding might lag.")
+            
+            self.interactor.CreateRepeatingTimer(timer_interval_ms)
+            
+            # 6. Start interaction
+            print(f"Starting animation loop with dt = {self.dt}s.")
+            self.interactor.Initialize()
+            self.interactor.Start()
 
 if __name__ == "__main__":
-    # Example usage
-    # We need a minimal 'MyDoublePendulum' class to make this runnable
-    # (based on your original code's import)
     class MyDoublePendulum:
         def __init__(self, dt, x_target, Q, R, Q_f, g):
-            self.l1 = 1.0  # Example value
-            self.l2 = 1.0  # Example value
+            self.l1 = 1.0
+            self.l2 = 1.0
             self.dt = dt
             self.g = g
-            # other params stored as needed...
 
-    # Import jax.numpy or just use numpy
-    # import jax.numpy as jnp
-    import numpy as jnp # Use standard numpy for this example if jax isn't needed
+    import numpy as jnp 
     
     pend = MyDoublePendulum(dt=0.01,
                             x_target=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),  
@@ -310,20 +335,25 @@ if __name__ == "__main__":
                             Q_f=jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0])),
                             g=9.81)
     
-    # Simulate some data (here just a simple swing-up trajectory)
     T = 5.0
     dt = 0.01
     tspan = jnp.arange(0, T + dt, dt)
     N = len(tspan)
-    X_data = jnp.zeros((4, N))
-    
-    # Use standard numpy assignment if not using JAX
     q1 = jnp.pi * jnp.sin(0.5 * tspan)
     q2 = jnp.pi * jnp.cos(0.5 * tspan)
-    X_data = np.array([q1, q2, np.zeros(N), np.zeros(N)]) # Re-create as standard numpy array
+    X_data = np.array([q1, q2, np.zeros(N), np.zeros(N)])
 
-    # Create the animation object
     anim = AnimationDoublePendulum(pend, X_data, tspan, dt)
     
-    # Run the animation
-    anim.animate()
+    # Example usage for higher quality:
+    # Set desired resolution and bitrate when calling animate
+    anim.animate(save_video=False, 
+                 filename="my_pendulum_high_quality.mp4", 
+                 resolution=(1920, 1080), # Full HD
+                 bitrate=8000000) # 8 Mbps (good for 1080p, adjust as needed)
+
+    # You could also try even higher resolutions if your system can handle it:
+    # anim.animate(save_video=True, 
+    #              filename="my_pendulum_4k.mp4", 
+    #              resolution=(3840, 2160), # 4K UHD
+    #              bitrate=20000000) # 20 Mbps for 4K
