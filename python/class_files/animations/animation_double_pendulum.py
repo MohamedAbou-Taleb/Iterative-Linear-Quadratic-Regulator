@@ -1,10 +1,10 @@
 import vtk
 import numpy as np
-import cv2
-from vtk.util import numpy_support
+import cv2  # Required for video saving
+from vtk.util import numpy_support  # Required to convert VTK images to numpy
 
 class AnimationDoublePendulum:
-    # ... (your existing __init__, compute_positions, etc. methods) ...
+    
     def __init__(self, double_pendulum_sys, X_data, tspan, dt):
         self.double_pendulum_sys = double_pendulum_sys
         self.l1 = double_pendulum_sys.l1
@@ -25,6 +25,9 @@ class AnimationDoublePendulum:
         self.recording = False
         self.video_writer = None
         self.window_to_image_filter = None
+        
+        # --- UI Elements ---
+        self.text_actor = None
 
         # --- Pre-compute all positions and orientations ---
         print("Pre-computing trajectories...")
@@ -178,8 +181,16 @@ class AnimationDoublePendulum:
             joint_actor_2 = vtk.vtkActor()
             joint_actor_2.SetMapper(joint_mapper_2)
             joint_actor_2.GetProperty().SetColor([0, 0, 0]) 
-
             
+            # --- TIME DISPLAY SETUP ---
+            self.text_actor = vtk.vtkTextActor()
+            self.text_actor.SetInput("t = 0.00 s")
+            txt_prop = self.text_actor.GetTextProperty()
+            txt_prop.SetFontSize(30)
+            txt_prop.SetColor(0, 0, 0) # Black color
+            txt_prop.SetFontFamilyToArial()
+            self.text_actor.SetPosition(30, 30) # Pixels from bottom left
+
             # --- Renderer setup ---
             self.renderer = vtk.vtkRenderer()
             self.renderer.AddActor(actor_1)
@@ -187,11 +198,11 @@ class AnimationDoublePendulum:
             self.renderer.AddActor(actor_floor)
             self.renderer.AddActor(joint_actor_1)
             self.renderer.AddActor(joint_actor_2)
+            self.renderer.AddActor(self.text_actor) # Add text
             self.renderer.SetBackground(1,1,1) 
             
             # --- Render Window setup ---
             self.render_window = vtk.vtkRenderWindow()
-            # self.render_window.SetSize(800, 600) # This will be set by animate method
             self.render_window.AddRenderer(self.renderer)
             
             # --- Interactor setup ---
@@ -245,82 +256,87 @@ class AnimationDoublePendulum:
             components = vtk_array.GetNumberOfComponents()
             
             arr = numpy_support.vtk_to_numpy(vtk_array).reshape(height, width, components)
+            # VTK is bottom-up, OpenCV is top-down
             arr = np.flip(arr, 0)
+            # VTK is RGB, OpenCV is BGR
             arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
             
             self.video_writer.write(arr)
 
     def update_scene_callback(self, interactor, event):
+        # Increment the timestep index
         self.timestep_index = (self.timestep_index + 1) % self.N
         
+        # --- UPDATE TIME TEXT ---
+        current_time = self.timestep_index * self.dt
+        self.text_actor.SetInput(f"t = {current_time:.2f} s")
+        
+        # Update all the transforms in the scene
         self.set_scene_to_timestep(self.timestep_index)
+        
+        # Render the updated scene
         self.render_window.Render()
 
+        # If recording, save the frame
         if self.recording:
             self.write_video_frame()
             
+            # Stop recording if we loop back to the start
             if self.timestep_index == 0:
                 print("Simulation loop finished. Saving video...")
                 self.recording = False
-                self.video_writer.release()
-                self.video_writer = None
+                if self.video_writer:
+                    self.video_writer.release()
+                    self.video_writer = None
                 print("Video saved successfully.")
-                # You might want to exit the interactor here
-                # self.interactor.Exit() # Uncomment if you want to close window automatically after saving
 
     def animate(self, save_video=False, filename="double_pendulum.mp4", 
-                    resolution=(1920, 1080), 
-                    bitrate=4000000):
+                resolution=(1920, 1080), 
+                bitrate=4000000):
+        
+        # 1. Create all VTK actors FIRST
+        self.create_environment()
+        
+        # 2. NOW it is safe to set the size
+        self.render_window.SetSize(resolution[0], resolution[1])
+        
+        # 3. Set the scene to the initial state
+        self.set_scene_to_timestep(0)
+        self.render_window.Render()
+        
+        # --- VIDEO RECORDING SETUP ---
+        self.recording = save_video
+        if self.recording:
+            print(f"Initializing video writer: {filename} at {resolution[0]}x{resolution[1]}")
+            self.window_to_image_filter = vtk.vtkWindowToImageFilter()
+            self.window_to_image_filter.SetInput(self.render_window)
+            self.window_to_image_filter.SetInputBufferTypeToRGB()
+            self.window_to_image_filter.ReadFrontBufferOff()
+            self.window_to_image_filter.Update()
             
-            # 1. Create all VTK actors, mappers, renderers, and the render_window FIRST
-            self.create_environment()
+            w, h = self.render_window.GetSize()
+            fps = int(1.0 / self.dt)
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
             
-            # 2. NOW it is safe to set the size, because render_window exists
-            self.render_window.SetSize(resolution[0], resolution[1])
-            
-            # 3. Set the scene to the initial state (t=0)
-            self.set_scene_to_timestep(0)
-            self.render_window.Render()
-            
-            # --- VIDEO RECORDING SETUP ---
-            self.recording = save_video
-            if self.recording:
-                print(f"Initializing video writer: {filename} at {resolution[0]}x{resolution[1]}")
-                self.window_to_image_filter = vtk.vtkWindowToImageFilter()
-                self.window_to_image_filter.SetInput(self.render_window)
-                self.window_to_image_filter.SetInputBufferTypeToRGB()
-                self.window_to_image_filter.ReadFrontBufferOff()
-                self.window_to_image_filter.Update()
-                
-                w, h = self.render_window.GetSize()
-                fps = int(1.0 / self.dt)
-                fourcc = cv2.VideoWriter_fourcc(*'mp4v') 
-                
-                # Initialize VideoWriter
-                self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h), isColor=True)
-                
-                # Note: Setting bitrate via 'set' is codec-dependent and may not always take effect 
-                # with standard opencv backends, but increasing resolution is the primary quality factor.
-                self.video_writer.set(cv2.CAP_PROP_BITRATE, bitrate) 
+            self.video_writer = cv2.VideoWriter(filename, fourcc, fps, (w, h), isColor=True)
+            self.video_writer.set(cv2.CAP_PROP_BITRATE, bitrate) 
 
-            # 4. Add the callback function
-            self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
-            
-            # 5. Create the repeating timer
-            timer_interval_ms = int(self.dt * 1000)
-            if timer_interval_ms < 10:
-                print(f"Warning: Timer interval {timer_interval_ms}ms is very fast. Video encoding might lag.")
-            
-            self.interactor.CreateRepeatingTimer(timer_interval_ms)
-            
-            # 6. Start interaction
-            print(f"Starting animation loop with dt = {self.dt}s.")
-            self.interactor.Initialize()
-            self.interactor.Start()
+        # 4. Add the callback function
+        self.interactor.AddObserver(vtk.vtkCommand.TimerEvent, self.update_scene_callback)
+        
+        # 5. Create the repeating timer
+        timer_interval_ms = int(self.dt * 1000)
+        self.interactor.CreateRepeatingTimer(timer_interval_ms)
+        
+        # 6. Start interaction
+        print(f"Starting animation loop with dt = {self.dt}s.")
+        self.interactor.Initialize()
+        self.interactor.Start()
 
 if __name__ == "__main__":
+    # Example usage
     class MyDoublePendulum:
-        def __init__(self, dt, x_target, Q, R, Q_f, g):
+        def __init__(self, dt, g):
             self.l1 = 1.0
             self.l2 = 1.0
             self.dt = dt
@@ -328,32 +344,23 @@ if __name__ == "__main__":
 
     import numpy as jnp 
     
-    pend = MyDoublePendulum(dt=0.01,
-                            x_target=jnp.array([jnp.pi, 0.0, 0.0, 0.0]),  
-                            Q=jnp.diag(jnp.array([10.0, 10.0, 0.1, 0.1])),
-                            R=jnp.diag(jnp.array([0.1, 0.1])),
-                            Q_f=jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0])),
-                            g=9.81)
+    pend = MyDoublePendulum(dt=0.01, g=9.81)
     
+    # Simulate some data (swing-up trajectory example)
     T = 5.0
     dt = 0.01
     tspan = jnp.arange(0, T + dt, dt)
     N = len(tspan)
+    
     q1 = jnp.pi * jnp.sin(0.5 * tspan)
     q2 = jnp.pi * jnp.cos(0.5 * tspan)
-    X_data = np.array([q1, q2, np.zeros(N), np.zeros(N)])
+    X_data = np.array([q1, q2, np.zeros(N), np.zeros(N)]) 
 
+    # Create the animation object
     anim = AnimationDoublePendulum(pend, X_data, tspan, dt)
     
-    # Example usage for higher quality:
-    # Set desired resolution and bitrate when calling animate
-    anim.animate(save_video=False, 
-                 filename="my_pendulum_high_quality.mp4", 
-                 resolution=(1920, 1080), # Full HD
-                 bitrate=8000000) # 8 Mbps (good for 1080p, adjust as needed)
-
-    # You could also try even higher resolutions if your system can handle it:
-    # anim.animate(save_video=True, 
-    #              filename="my_pendulum_4k.mp4", 
-    #              resolution=(3840, 2160), # 4K UHD
-    #              bitrate=20000000) # 20 Mbps for 4K
+    # Run the animation with video saving enabled
+    anim.animate(save_video=True, 
+                 filename="my_pendulum_HD.mp4", 
+                 resolution=(1920, 1080), 
+                 bitrate=8000000)
