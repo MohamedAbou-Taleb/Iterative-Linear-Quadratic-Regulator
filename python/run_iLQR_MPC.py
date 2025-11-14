@@ -60,7 +60,7 @@ def main():
         x_target=x_target,
         Q=Q, R=R, Q_f=Q_f,
         g=g, l=l, d=d,
-        integrator='midpoint', # Use Euler for the optimizer
+        integrator='backward_euler', # Use Euler for the optimizer
         use_jit=True
     )
     
