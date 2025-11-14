@@ -17,6 +17,8 @@ setup(
         'jax',
         'matplotlib',
         'vtk',
+        'opencv-python',
+        'jaxopt',
         # e.g., 'pandas', 'numpy'
     ],
     
