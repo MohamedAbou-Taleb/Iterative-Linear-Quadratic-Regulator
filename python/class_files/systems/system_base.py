@@ -116,19 +116,6 @@ class System(ABC):
 
             def body_fun(state):
                 xkPlusOne_k, f_val, f_norm, k = state
-                f_val = _be_residual(xkPlusOne_k, x, u)
-                
-
-                J_cont_x = _f_cont_x(xkPlusOne_k, u)
-                j_xkPlusOne_val = jnp.eye(self.n_x) - self.dt * J_cont_x
-
-                # J_xkPlusOne = dF/dxkPlusOne
-                # j_xkPlusOne_val = _be_dF_dxkPlusOne_func(xkPlusOne_k, x, u)
-                
-                # Solve J_xkPlusOne * delta_xkPlusOne = -F
-                # Add regularization for numerical stability
-                # j_xkPlusOne_stable = j_xkPlusOne_val + jnp.eye(self.n_x) * 1e-6
-                j_xkPlusOne_stable = j_xkPlusOne_val
                 delta_xkPlusOne_vec = jnp.linalg.solve(j_xkPlusOne_stable, -f_val)
                 
                 xkPlusOne_k_plus_1 = xkPlusOne_k + delta_xkPlusOne_vec
@@ -144,6 +131,14 @@ class System(ABC):
             xkPlusOne_guess = x + self.dt * self._f_cont_fcn(x, u)  # Better guess with Euler step
             f_val_guess = _be_residual(xkPlusOne_guess, x, u)
             f_norm_guess = jnp.linalg.norm(f_val_guess)
+
+                        # --- OPTIMIZATION (Quasi-Newton): ---
+            # Calculate the Jacobian *once* using the initial guess.
+            J_cont_x_guess = _f_cont_x(xkPlusOne_guess, u)
+            j_xkPlusOne_val_stale = jnp.eye(self.n_x) - self.dt * J_cont_x_guess
+            # Add regularization for numerical stability
+            j_xkPlusOne_stable = j_xkPlusOne_val_stale # + jnp.eye(self.n_x) * 1e-6
+
             initial_state = (xkPlusOne_guess, f_val_guess, f_norm_guess, 0)
             xkPlusOne_solution, _, _, _ = lax.while_loop(cond_fun, body_fun, initial_state)
             return xkPlusOne_solution
