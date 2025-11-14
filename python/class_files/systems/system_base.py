@@ -4,6 +4,7 @@ from jax import jit, grad, jacfwd, hessian, lax
 from abc import ABC, abstractmethod
 from typing import Callable, Union
 import numpy as np
+from jax.scipy.linalg import lu_factor, lu_solve # <-- 1. Import LU functions
 
 class System(ABC):
     """
@@ -116,7 +117,7 @@ class System(ABC):
 
             def body_fun(state):
                 xkPlusOne_k, f_val, f_norm, k = state
-                delta_xkPlusOne_vec = jnp.linalg.solve(j_xkPlusOne_stable, -f_val)
+                delta_xkPlusOne_vec = lu_solve(lu_factor_stale, -f_val)
                 
                 xkPlusOne_k_plus_1 = xkPlusOne_k + delta_xkPlusOne_vec
 
@@ -138,7 +139,7 @@ class System(ABC):
             j_xkPlusOne_val_stale = jnp.eye(self.n_x) - self.dt * J_cont_x_guess
             # Add regularization for numerical stability
             j_xkPlusOne_stable = j_xkPlusOne_val_stale # + jnp.eye(self.n_x) * 1e-6
-
+            lu_factor_stale = lu_factor(j_xkPlusOne_stable) # <-- 2. Compute LU factor
             initial_state = (xkPlusOne_guess, f_val_guess, f_norm_guess, 0)
             xkPlusOne_solution, _, _, _ = lax.while_loop(cond_fun, body_fun, initial_state)
             return xkPlusOne_solution
