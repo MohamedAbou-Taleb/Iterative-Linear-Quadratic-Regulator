@@ -1,10 +1,10 @@
 import jax
 import jax.numpy as jnp
 from jax import jit, grad, jacfwd, hessian, lax
+from jax.scipy.linalg import lu_factor, lu_solve
 from abc import ABC, abstractmethod
 from typing import Callable, Union
 import numpy as np
-from jax.scipy.linalg import lu_factor, lu_solve # <-- 1. Import LU functions
 
 class System(ABC):
     """
@@ -42,17 +42,10 @@ class System(ABC):
         self.n_u = n_u
         self.dt = dt
         self.use_jit = use_jit
-        # self.integrator_type = integrator # This was unused
 
         # --- 1. Define the discrete-time dynamics (f_fcn) ---
-        #     We build the discrete-time function `_f_fcn` based on the
-        #     subclass's continuous-time implementation `_f_cont_fcn`.
-
-        # --- 0. Pre-compile continuous dynamics derivatives ---
-        # This is the core optimization for Backward Euler.
-        # We get the Jacobians of the continuous dynamics *once*.
-        _f_cont_x = jacfwd(self._f_cont_fcn, argnums=0)
-        _f_cont_u = jacfwd(self._f_cont_fcn, argnums=1)
+        #    We build the discrete-time function `_f_fcn` based on the
+        #    subclass's continuous-time implementation `_f_cont_fcn`.
         
         def _euler_integrator(x, u):
             """Discrete-time dynamics using Forward Euler (RK1)."""
@@ -79,118 +72,6 @@ class System(ABC):
             k3 = self._f_cont_fcn(x + self.dt/2 * k2, u)
             k4 = self._f_cont_fcn(x + self.dt * k3, u)
             return x + (self.dt / 6.0) * (k1 + 2*k2 + 2*k3 + k4)
-        
-        # --- Backward Euler (Implicit) Integrator ---
-        # This is a more complex case as it requires solving an
-        # implicit equation, which we do with a custom JVP rule.
-        
-        # 1. Define the residual function and its Jacobians
-        #    We need to find `xkPlusOne = x_next` such that:
-        #    F(xkPlusOne, x, u) = xkPlusOne - x - dt * _f_cont_fcn(xkPlusOne, u) = 0
-        def _be_residual(xkPlusOne, x, u):
-            """ Residual F(xkPlusOne, p) = xkPlusOne - x - dt * f_cont(xkPlusOne, u) """
-            return xkPlusOne - x - self.dt * self._f_cont_fcn(xkPlusOne, u)
-
-        # dF/dxkPlusOne (Jacobian w.r.t. the variable we solve for, xkPlusOne=x_next)
-        _be_dF_dxkPlusOne_func = jax.jacobian(_be_residual, argnums=0)
-        
-        # dF/dx (Jacobian w.r.t. parameter x=x_prev)
-        _be_dF_dx_func = jax.jacobian(_be_residual, argnums=1)
-        
-        # dF/du (Jacobian w.r.t. parameter u)
-        _be_dF_du_func = jax.jacobian(_be_residual, argnums=2)
-
-        @jax.custom_jvp
-        def _backward_euler_integrator(x, u):
-            """ 
-            Primal: Solves F(xkPlusOne, x, u) = 0 for xkPlusOne=x_next.
-            This function is the discrete-time dynamics f(x, u).
-            """
-            
-            # Use Newton's method to find xkPlusOne = x_next
-            def cond_fun(state):
-                xkPlusOne_k, f_val, f_norm, k = state
-                # f_val = _be_residual(xkPlusOne_k, x, u)
-                # norm_F = jnp.linalg.norm(f_val)
-                # Stop when residual is small or max iterations hit
-                return (f_norm > 1e-5) & (k < 20)
-
-            def body_fun(state):
-                xkPlusOne_k, f_val, f_norm, k = state
-                delta_xkPlusOne_vec = lu_solve(lu_factor_stale, -f_val)
-                
-                xkPlusOne_k_plus_1 = xkPlusOne_k + delta_xkPlusOne_vec
-
-                # --- Compute residual for the *next* iteration's cond_fun ---
-                f_val_new = _be_residual(xkPlusOne_k_plus_1, x, u)
-                f_norm_new = jnp.linalg.norm(f_val_new)
-                return (xkPlusOne_k_plus_1, f_val_new, f_norm_new, k + 1)
-
-            # Use x (current state) as the initial guess for xkPlusOne (next state)
-            # This is a good "warm start" for small dt
-            # xkPlusOne_guess = x 
-            xkPlusOne_guess = x + self.dt * self._f_cont_fcn(x, u)  # Better guess with Euler step
-            f_val_guess = _be_residual(xkPlusOne_guess, x, u)
-            f_norm_guess = jnp.linalg.norm(f_val_guess)
-
-                        # --- OPTIMIZATION (Quasi-Newton): ---
-            # Calculate the Jacobian *once* using the initial guess.
-            J_cont_x_guess = _f_cont_x(xkPlusOne_guess, u)
-            j_xkPlusOne_val_stale = jnp.eye(self.n_x) - self.dt * J_cont_x_guess
-            # Add regularization for numerical stability
-            j_xkPlusOne_stable = j_xkPlusOne_val_stale # + jnp.eye(self.n_x) * 1e-6
-            lu_factor_stale = lu_factor(j_xkPlusOne_stable) # <-- 2. Compute LU factor
-            initial_state = (xkPlusOne_guess, f_val_guess, f_norm_guess, 0)
-            xkPlusOne_solution, _, _, _ = lax.while_loop(cond_fun, body_fun, initial_state)
-            return xkPlusOne_solution
-
-        @_backward_euler_integrator.defjvp
-        def _backward_euler_jvp(primals, tangents):
-            """ 
-            JVP rule for the implicit solver.
-            This implements the Implicit Function Theorem.
-            """
-            x, u = primals
-            j_x, j_u = tangents # tangents dx/dt, du/dt
-
-            # 1. Run the primal to get the solution xkPlusOne=x_next
-            xkPlusOne = _backward_euler_integrator(x, u)
-
-            # # 2. Get Jacobians at the solution (xkPlusOne, x, u)
-            # J_xkPlusOne = _be_dF_dxkPlusOne_func(xkPlusOne, x, u) # dF/dxkPlusOne
-            # J_x = _be_dF_dx_func(xkPlusOne, x, u) # dF/dx
-            # J_u = _be_dF_du_func(xkPlusOne, x, u) # dF/du
-
-            # 2. --- OPTIMIZATION ---
-            #    Get Jacobians at the solution (xkPlusOne, x, u)
-            #    by analytically constructing them.
-            J_cont_x_sol = _f_cont_x(xkPlusOne, u)
-            J_cont_u_sol = _f_cont_u(xkPlusOne, u)
-            
-            # dF/dxkPlusOne = I - dt * df_cont/dxkPlusOne
-            J_xkPlusOne = jnp.eye(self.n_x) - self.dt * J_cont_x_sol
-            
-            # dF/dx = -I
-            J_x = -jnp.eye(self.n_x)
-            
-            # dF/du = -dt * df_cont/du
-            J_u = -self.dt * J_cont_u_sol
-            
-            # 3. Solve the forward-mode linear system for j_xkPlusOne (tangent of x_next)
-            #    J_xkPlusOne @ j_xkPlusOne = - (J_x @ j_x + J_u @ j_u)
-            
-            # Compute RHS:
-            rhs = - (J_x @ j_x + J_u @ j_u)
-            
-            # Solve for j_xkPlusOne
-            # J_xkPlusOne_stable = J_xkPlusOne + jnp.eye(self.n_x) * 1e-6
-            J_xkPlusOne_stable = J_xkPlusOne
-            j_xkPlusOne = jnp.linalg.solve(J_xkPlusOne_stable, rhs)
-            
-            return xkPlusOne, j_xkPlusOne
-        
-        # --- End of Backward Euler ---
-
 
         # Select the chosen integrator
         if integrator == 'rk4':
@@ -200,20 +81,133 @@ class System(ABC):
         elif integrator == 'euler':
             self._f_fcn = _euler_integrator
         elif integrator == 'backward_euler':
+            # --- Backward Euler Implementation (Optimized) ---
+            
+            # --- This is now a standalone solver, NOT a custom_jvp function ---
+            # We have removed the @jax.custom_jvp decorator
+            def _backward_euler_integrator(x, u):
+                """
+                Solves for x_k+1 using an optimized Quasi-Newton method.
+                x_k+1 = x_k + dt * f_cont(x_k+1, u_k)
+                """
+                
+                # --- Get continuous-time dynamics jacobians (pre-compiled) ---
+                _f_cont_x = self._f_cont_x_fcn # (JIT-compiled jacfwd)
+                _f_cont_u = self._f_cont_u_fcn # (JIT-compiled jacfwd)
+                
+                # --- Define the implicit residual function ---
+                # F(xkPlusOne, x, u) = xkPlusOne - x - dt * f_cont(xkPlusOne, u) = 0
+                @jit
+                def _be_residual(xkPlusOne, x, u):
+                    return xkPlusOne - x - self.dt * self._f_cont_fcn(xkPlusOne, u)
+
+                # --- Newton Solver (Optimized) ---
+                def cond_fun(state):
+                    xkPlusOne_k, f_val, f_norm, k = state
+                    return (f_norm > 1e-5) & (k < 20) # <-- CHANGED TOLERANCE
+
+                def body_fun(state):
+                    xkPlusOne_k, f_val, f_norm, k = state
+                    
+                    # Solve J_stale * delta = -F using pre-computed LU
+                    delta_xkPlusOne_vec = lu_solve(lu_factor_stale, -f_val)
+                    
+                    xkPlusOne_k_plus_1 = xkPlusOne_k + delta_xkPlusOne_vec
+                    
+                    f_val_new = _be_residual(xkPlusOne_k_plus_1, x, u)
+                    f_norm_new = jnp.linalg.norm(f_val_new)
+                    
+                    return (xkPlusOne_k_plus_1, f_val_new, f_norm_new, k + 1)
+
+                # Use x (current state) as the initial guess if none provided
+                
+                xkPlusOne_guess = x + self.dt * self._f_cont_fcn(x, u)
+                
+                f_val_guess = _be_residual(xkPlusOne_guess, x, u)
+                f_norm_guess = jnp.linalg.norm(f_val_guess)
+                
+                # --- Quasi-Newton: Calculate Jacobian *once* ---
+                J_cont_x_guess = _f_cont_x(xkPlusOne_guess, u)
+                j_xkPlusOne_val_stale = jnp.eye(self.n_x) - self.dt * J_cont_x_guess
+                j_xkPlusOne_stable = j_xkPlusOne_val_stale # + jnp.eye(self.n_x) * 1e-5 # <-- CHANGED TOLERANCE (in comment)
+                
+                # --- Pre-compute LU factorization ---
+                lu_factor_stale = lu_factor(j_xkPlusOne_stable)
+                
+                initial_state = (xkPlusOne_guess, f_val_guess, f_norm_guess, 0)
+                
+                xkPlusOne_solution, _, _, _ = lax.while_loop(cond_fun, body_fun, initial_state)
+                return xkPlusOne_solution
+            
+            # --- NEW: Analytical Jacobian Functions ---
+            # These functions compute the Jacobians f_x and f_u directly
+            # using the Implicit Function Theorem, avoiding jacfwd(custom_jvp).
+            
+            def _be_f_x_fcn(x, u):
+                """Computes df/dx for the backward euler integrator."""
+                # 1. Find the solution x_k+1
+                xkPlusOne_solution = _backward_euler_integrator(x, u)
+                
+                # 2. Get true Jacobians at the solution
+                _f_cont_x = self._f_cont_x_fcn
+                J_cont_x = _f_cont_x(xkPlusOne_solution, u)
+
+                # 3. Define the residual Jacobians
+                # F = xkPlusOne - x - dt * f_cont(xkPlusOne, u)
+                # J_xkPlusOne = dF/dxkPlusOne = I - dt * df_cont/dxkPlusOne
+                # J_x = dF/dx = -I
+                J_xkPlusOne_val = jnp.eye(self.n_x) - self.dt * J_cont_x
+                J_x_val = -jnp.eye(self.n_x)
+
+                # 4. Solve the IFT system: J_xkPlusOne @ f_x = -J_x
+                # This gives f_x = d(xkPlusOne)/dx
+                f_x = jnp.linalg.solve(J_xkPlusOne_val, -J_x_val)
+                return f_x
+
+            def _be_f_u_fcn(x, u):
+                """Computes df/du for the backward euler integrator."""
+                # 1. Find the solution x_k+1
+                xkPlusOne_solution = _backward_euler_integrator(x, u)
+                
+                # 2. Get true Jacobians at the solution
+                _f_cont_x = self._f_cont_x_fcn
+                _f_cont_u = self._f_cont_u_fcn
+                J_cont_x = _f_cont_x(xkPlusOne_solution, u)
+                J_cont_u = _f_cont_u(xkPlusOne_solution, u)
+
+                # 3. Define the residual Jacobians
+                # F = xkPlusOne - x - dt * f_cont(xkPlusOne, u)
+                # J_xkPlusOne = dF/dxkPlusOne = I - dt * df_cont/dxkPlusOne
+                # J_u = dF/du = -dt * df_cont/du
+                J_xkPlusOne_val = jnp.eye(self.n_x) - self.dt * J_cont_x
+                J_u_val = -self.dt * J_cont_u
+
+                # 4. Solve the IFT system: J_xkPlusOne @ f_u = -J_u
+                # This gives f_u = d(xkPlusOne)/du
+                f_u = jnp.linalg.solve(J_xkPlusOne_val, -J_u_val)
+                return f_u
+            
+            # --- End of Backward Euler Implementation ---
+            
             self._f_fcn = _backward_euler_integrator
+            # --- Point to the new analytical Jacobian functions ---
+            _f_x = _be_f_x_fcn
+            _f_u = _be_f_u_fcn
+            
         else:
-            raise ValueError(
-                f"Unknown integrator: '{integrator}'. "
-                "Supported: 'rk4', 'midpoint', 'euler', 'backward_euler'."
-            )
+            raise ValueError(f"Unknown integrator: '{integrator}'. Supported: 'rk4', 'midpoint', 'euler', 'backward_euler'.")
 
         # --- 2. Define all derivative functions ---
-        #     These JAX transformations are now applied to the *generated*
-        #     `self._f_fcn`. If 'backward_euler' is chosen, JAX will
-        #     automatically use our custom JVP rule to compute f_x and f_u.
         
-        _f_x = jacfwd(self._f_fcn, argnums=0)
-        _f_u = jacfwd(self._f_fcn, argnums=1)
+        # If not backward_euler, compute f_x and f_u using jacfwd
+        if integrator not in ['backward_euler']:
+            _f_x = jacfwd(self._f_fcn, argnums=0)
+            _f_u = jacfwd(self._f_fcn, argnums=1)
+        
+        # --- Store (now JIT-compiled) continuous dynamics derivatives ---
+        # We need these for the backward_euler analytical functions
+        self._f_cont_x_fcn = jit(jacfwd(self._f_cont_fcn, argnums=0))
+        self._f_cont_u_fcn = jit(jacfwd(self._f_cont_fcn, argnums=1))
         
         _l_x = grad(self._l_fcn, argnums=0)
         _l_u = grad(self._l_fcn, argnums=1)
