@@ -77,6 +77,8 @@ class MyPendulum(System):
         dx = x - self.x_target
         cost_x = 0.5 * dx.T @ self.Q @ dx
         cost_u = 0.5 * u.T @ self.R @ u
+        # add a log barrier to keep input between -10 and 10
+        # cost_u += -0.01 * (jnp.log(10 - u[0]) + jnp.log(10 + u[0]))
         
         # Your original MATLAB code scales cost by dt.
         # This is common in DDP/iLQR.
