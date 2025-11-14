@@ -15,10 +15,9 @@ def main():
     # =========================================================================
     print("Setting up MPC parameters for double pendulum...")
     dt = 0.01
-    
     # --- MPC Horizon Settings ---
-    # T_horizon = 0.5  # Time horizon for each MPC solve
-    T_horizon = 1  # Time horizon for each MPC solve
+    # T_horizon = 1 # Time horizon for each MPC solve
+    T_horizon = 2  # Time horizon for each MPC solve
     tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
     N_horizon = len(tspan_horizon) - 1
     
@@ -46,15 +45,19 @@ def main():
     theta2 = (1/12) * m2 * l2**2
     
     # Cost parameters
-    Q = jnp.diag(jnp.array([1.0, 2.0, 0.1, 0.1]))
-    # R = jnp.diag(jnp.array([0.1]))
-    R = jnp.diag(jnp.array([0.2]))
-    Q_f = jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0]))
+    # Q = jnp.diag(jnp.array([1.0, 2.0, 0.1, 0.1]))
+    # R = jnp.diag(jnp.array([0.2]))
+    # Q_f = jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0]))
+
+    Q = jnp.diag(jnp.array([5.0, 5.0, 0.1, 0.1]))
+    R = jnp.diag(jnp.array([50]))
+    Q_f = jnp.diag(jnp.array([1000.0, 1000.0, 10.0, 10.0]))
     
     # Target: "up-up" position
     x_target = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
     # Initial state: "down-down" position
-    x_0 = jnp.array([0.0, 0.0, -5.0, 1.0])
+    # x_0 = jnp.array([0.0, 0.0, -5.0, 1.0])
+    x_0 = jnp.array([0.0, 0.0, 0.0, 0.0])
     
     # Initial control guess for the *first* solve
     U_init = jnp.zeros((n_u, N_horizon))
@@ -85,7 +88,7 @@ def main():
         dt=dt,
         x_target=x_target,
         Q=Q, R=R, Q_f=Q_f,
-        g=g, m1=m1*0.8, m2=m2*0.7, l1=l1*1.2, l2=l2, d1=d1, d2=d2,
+        g=g, m1=m1, m2=m2, l1=l1, l2=l2, d1=d1, d2=d2,
         theta1=theta1, theta2=theta2,
         integrator='rk4', # <-- Use RK4 for simulation accuracy
         use_jit=True
@@ -224,7 +227,9 @@ def main():
     plt.show()
 
     anim = AnimationDoublePendulum(pendulum_sys_sim, X_sim, tspan_sim, dt)
-    anim.animate()
+    anim.animate(save_video=False, 
+                 filename="double_pendulum_swing_up.mp4", 
+                 fullscreen=True)
 
 if __name__ == "__main__":
     main()

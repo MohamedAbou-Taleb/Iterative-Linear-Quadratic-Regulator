@@ -15,7 +15,7 @@ def main():
     # =========================================================================
     print("Setting up double pendulum parameters...")
     dt = 0.01
-    T = 7.0  # Longer horizon for the harder problem
+    T = 8.0  # Longer horizon for the harder problem
     tspan = jnp.arange(0, T + dt, dt)
     N = len(tspan) - 1
     
@@ -40,7 +40,7 @@ def main():
     # Cost parameters
     # Penalize position error and control effort
     Q = jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1]))
-    R = jnp.diag(jnp.array([10.0]))
+    R = jnp.diag(jnp.array([1.0]))
     Q_f = jnp.diag(jnp.array([1000.0, 1000.0, 100.0, 100.0])) # High terminal cost
     
     # Target: "up-up" position
@@ -53,7 +53,7 @@ def main():
     
     # Solver settings
     tol = 1e-5
-    maxiter = 500 # More iterations for the harder problem
+    maxiter = 700 # More iterations for the harder problem
     
     # =========================================================================
     # --- 2. Instantiate System and Solver ---
@@ -162,7 +162,7 @@ def main():
     plt.show()
 
     anim = AnimationDoublePendulum(double_pendulum_sys, X_bar, tspan, dt)
-    anim.animate()
+    anim.animate(fullscreen=True, save_video=False, filename="double_pendulum_swing_up.mp4")
 
 if __name__ == "__main__":
     main()

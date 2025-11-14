@@ -2,7 +2,6 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 import time
-# import casadi as ca
 
 # Import your custom classes from the other files
 from class_files.systems.system_base import System  # Base class
