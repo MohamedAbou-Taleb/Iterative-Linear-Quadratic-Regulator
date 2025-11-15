@@ -23,7 +23,6 @@ x_target = [pi;0];
 
 pendulum_sys = Pendulum_System_CLASS(g=g, l=l, d=d, dt=dt, Q=Q, R=R, Q_f=Q_f, x_target=x_target);
 pendulum_sys_sim = Pendulum_System_CLASS(g=g, l=l, d=d, dt=dt, Q=Q, R=R, Q_f=Q_f, x_target=x_target);
-u_target = fsolve(@(u) pendulum_sys.f_fcn(x_target, u) - x_target, 1);
 
 x_0 = [pi*0;0];
 
@@ -80,19 +79,16 @@ set(gcf, 'Color', 'w');
 subplot(3, 1, 1);
 plot(tspan_sim, X_sim(1, :), 'b-', 'LineWidth', 2);
 hold on;
-% plot(tspan, X_bar_casadi(1, :), 'r--', 'LineWidth', 2);
 plot([0, T_sim], [x_target(1), x_target(1)], LineWidth=2);
 title('Closed loop trajectory');
 xlabel('Time (s)');
 ylabel('State');
-% legend('iLQR', 'collocation');
 grid on;
 
 subplot(3, 1, 2)
 plot(tspan_sim, X_sim(2, :), 'b-', 'LineWidth', 2);
 hold on;
 plot([0, T_sim], [x_target(2), x_target(2)], LineWidth=2);
-% plot(tspan, X_bar_casadi(2, :), 'r--', 'LineWidth', 2);
 xlabel('Time (s)');
 ylabel('State');
 grid on;
@@ -102,7 +98,6 @@ subplot(3, 1, 3);
 % Plot control inputs (only up to time N)
 hold on
 plot(tspan_sim(1:N_sim), U_sim, 'k-', 'LineWidth', 2);
-% plot(tspan(1:N), U_bar_casadi, LineStyle="--", LineWidth=2)
 title('Optimal Control Input');
 xlabel('Time (s)');
 ylabel('Control (u)');
