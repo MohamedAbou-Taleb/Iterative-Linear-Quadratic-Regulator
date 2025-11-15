@@ -64,9 +64,6 @@ classdef iLQR_CLASS < handle
 
         end
         
-        % ... (All other methods: dynamics_fcn, stage_cost_fcn, ...) ...
-        % --- NO CHANGES ARE NEEDED IN ANY OTHER METHODS ---
-        % (They all correctly call obj.system.f_fcn, etc.)
         function [xkPlusOne, f_x, f_u] = dynamics_fcn(obj, x, u)
             xkPlusOne = obj.system.f_fcn(x, u);
             f_x = obj.system.f_x_fcn(x, u);
