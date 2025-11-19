@@ -9,7 +9,6 @@ m = 1.0
 dt = 0.01
 g = 9.81
 mu = 0.1        # Low friction
-# mu = 10        # High friction
 T_end = 1.5     # 1.5 seconds
 tol = 1e-6
 W = jnp.array([[1.0, 0.0], [0.0, 1.0]]) 
@@ -59,21 +58,14 @@ def fp_hard(x, y, q, u, tauk, rT, rN):
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, tauk, x), y_new
 
-# --- New Helper ---
-@jax.jit
-
-# --- Updated Backward Pass ---
 def fp_smooth(x, y, q, u, tauk, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
-    dpn = -prox_R0minus_smooth(vn)  # Smooth Normal
-    
+    dpn = -prox_R0minus_smooth(vn) 
     vt = -y[0] + rT*(u[0] + x[2])
-    
-    # USE THE NEW SMOOTH FRICTION HERE
     dpt = -prox_CT(vt, mu*dpn) 
-    
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, tauk, x), y_new
+
 # --- 4. Differentiable Contact Solver ---                 
 @jax.custom_jvp
 def solve_contact(x_guess, y_guess, qk, uk, tauk, rT, rN):
@@ -87,28 +79,24 @@ def solve_contact(x_guess, y_guess, qk, uk, tauk, rT, rN):
     return final[0], final[1], final[4].astype(jnp.float32)
  
 
-# --- 3. Modify the JVP (The Backward Pass) ---
 @solve_contact.defjvp
 def solve_contact_jvp(primals, tangents):
     x_g, y_g, q, u, tau, rT, rN = primals
     dx_g, dy_g, dq, du, dtau, drT, drN = tangents
     
     # 1. Primal Pass (Forward) - USES TRUE PHYSICS
-    # We use fp_hard (or fp_smooth without halo) so the simulation looks real.
     x_s, y_s, i_s = solve_contact(x_g, y_g, q, u, tau, rT, rN)
     
     # 2. Implicit Diff (Backward) - USES HALO PHYSICS
     def resid_fn(z_flat, q_, u_, tau_, rT_, rN_):
         x, y = z_flat[:4], z_flat[4:]
-        
-        xn, yn = fp_hard(x, y, q_, u_, tau_, rT_, rN_)
-        # xn, yn = fp_smooth(x, y, q_, u_, tau_, rT_, rN_)
 
+        # xn, yn = fp_smooth(x, y, q_, u_, tau_, rT_, rN_)
+        xn, yn = fp_hard(x, y, q_, u_, tau_, rT_, rN_) 
         return z_flat - jnp.concatenate([xn, yn])
     
     z_s = jnp.concatenate([x_s, y_s])
     
-    # The rest of the Jacobian logic remains the same...
     A = jax.jacfwd(resid_fn, 0)(z_s, q, u, tau, rT, rN)
     A_damped = A + 1e-6 * jnp.eye(A.shape[0])
     
@@ -120,9 +108,9 @@ def solve_contact_jvp(primals, tangents):
     
     dz = jnp.linalg.solve(A_damped, -b)
     return (x_s, y_s, i_s), (dz[:4], dz[4:], 0.0)
+
 # --- 5. Simulation ---
 def simulate_trajectory(q0, u0, tau):
-    # Generates t = dt, 2dt, ..., T_end
     t_span = jnp.arange(0, T_end, dt)
     def scan_fn(carrier, _):
         q, u, x, y = carrier
@@ -140,35 +128,38 @@ def simulate_trajectory(q0, u0, tau):
     init = (q0, u0, jnp.zeros(4), jnp.zeros(2))
     _, (q_stack, u_stack) = lax.scan(scan_fn, init, t_span)
     
-    # PREPEND Initial Conditions so trajectory includes t=0
     q_full = jnp.vstack([q0, q_stack])
     u_full = jnp.vstack([u0, u_stack])
     
     return q_full, u_full
 
 def simulate_q_only(q0, u0, tau):
-    # This wrapper now returns the full trajectory including t=0
     q_full, _ = simulate_trajectory(q0, u0, tau)
     return q_full
+
+# --- NEW WRAPPER: Velocity Only ---
+def simulate_u_only(q0, u0, tau):
+    _, u_full = simulate_trajectory(q0, u0, tau)
+    return u_full
 
 # --- 6. Execution ---
 if __name__ == "__main__":
     q0_val = jnp.array([0.0, 1.0])
     u0_val = jnp.array([1.0, 0.0])
+    tau_val = 0.0 
 
     print("Calculating Trajectories...")
-    tau_val = 0.0  # No actuation for now
     q_traj, u_traj = simulate_trajectory(q0_val, u0_val, tau_val)
 
-    print("Calculating Sensitivities (Jacobian)...")
-    jac_fn = jax.jit(jax.jacfwd(simulate_q_only, argnums=1))
-    jac_traj = jac_fn(q0_val, u0_val, tau_val)
+    print("Calculating Position Sensitivities (d q / d u0)...")
+    jac_q_fn = jax.jit(jax.jacfwd(simulate_q_only, argnums=1))
+    jac_traj_q = jac_q_fn(q0_val, u0_val, tau_val)
 
-    # Time axis must now start at 0.0 and have length N+1
+    print("Calculating Velocity Sensitivities (d u / d u0)...")
+    jac_u_fn = jax.jit(jax.jacfwd(simulate_u_only, argnums=1))
+    jac_traj_u = jac_u_fn(q0_val, u0_val, tau_val)
+
     t_axis = jnp.arange(0, T_end + dt, dt)
-    
-    # Handle potential off-by-one error if floating point math makes arange inclusive/exclusive inconsistent
-    # We ensure t_axis is same length as data
     if len(t_axis) != len(q_traj):
         t_axis = jnp.linspace(0, T_end, len(q_traj))
 
@@ -200,19 +191,20 @@ if __name__ == "__main__":
     ax3.set_ylabel("m/s")
     ax3.legend()
     ax3.grid(True)
+    fig1.suptitle("Figure 1: State Trajectories")
 
-    # Figure 2: Sensitivities
+    # Figure 2: Position Sensitivities (q vs u0)
     fig2, axes = plt.subplots(2, 2, figsize=(10, 8))
-    labels = [
+    labels_q = [
         (r'$\frac{\partial q_x}{\partial u_x}$', 0, 0),
         (r'$\frac{\partial q_x}{\partial u_y}$', 0, 1),
         (r'$\frac{\partial q_y}{\partial u_x}$', 1, 0),
         (r'$\frac{\partial q_y}{\partial u_y}$', 1, 1)
     ]
     
-    for label, r, c in labels:
+    for label, r, c in labels_q:
         ax = axes[r, c]
-        data = jac_traj[:, r, c]
+        data = jac_traj_q[:, r, c]
         ax.plot(t_axis, data, linewidth=2)
         ax.set_title(label)
         ax.grid(True)
@@ -220,8 +212,31 @@ if __name__ == "__main__":
         if (r==0 and c==0) or (r==1 and c==1):
             ax.plot(t_axis, t_axis, 'r--', alpha=0.5, label='y=t')
             ax.legend()
-
-    fig2.suptitle(r"Sensitivity of Position $q(t)$ to Initial Velocity $u(0)$")
+    fig2.suptitle(r"Figure 2: Sensitivity of Position $q(t)$ to $u(0)$")
     plt.tight_layout()
+
+    # Figure 3: Velocity Sensitivities (u vs u0)
+    fig3, axes = plt.subplots(2, 2, figsize=(10, 8))
+    labels_u = [
+        (r'$\frac{\partial u_x}{\partial u_x}$', 0, 0),
+        (r'$\frac{\partial u_x}{\partial u_y}$', 0, 1),
+        (r'$\frac{\partial u_y}{\partial u_x}$', 1, 0),
+        (r'$\frac{\partial u_y}{\partial u_y}$', 1, 1)
+    ]
     
+    for label, r, c in labels_u:
+        ax = axes[r, c]
+        data = jac_traj_u[:, r, c]
+        ax.plot(t_axis, data, linewidth=2)
+        ax.set_title(label)
+        ax.grid(True)
+        
+        # Theoretical expectations for u vs u0 in free space:
+        # u_t = u0 + a*t.  du/du0 = 1.
+        if (r==0 and c==0) or (r==1 and c==1):
+            ax.axhline(1.0, color='r', linestyle='--', alpha=0.5, label='y=1')
+            ax.legend()
+    fig3.suptitle(r"Figure 3: Sensitivity of Velocity $u(t)$ to $u(0)$")
+    plt.tight_layout()
+
     plt.show()
