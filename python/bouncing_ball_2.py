@@ -12,7 +12,7 @@ mu = 0.1        # High friction
 T_end = 1.5     # 1.5 seconds
 tol = 1e-6
 W = jnp.array([[1.0, 0.0], [0.0, 1.0]]) 
-EPSILON = 1  # Stable "Beanbag" parameter
+EPSILON = 5  # Stable "Beanbag" parameter
 
 # --- 2. Physics Helpers ---
 @jax.jit
@@ -59,11 +59,25 @@ def fp_hard(x, y, q, u, rT, rN):
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
 
+# --- New Helper ---
+@jax.jit
+def prox_CT_smooth(x, limit):
+    """Smooth approximation of Coulomb Friction using Tanh"""
+    # limit * tanh(x / limit) approximates clip(x, -limit, limit)
+    # The '3.0' factor makes the slope steeper near zero (closer to true stick)
+    safe_lim = limit + 1e-6
+    return safe_lim * jnp.tanh(x / safe_lim)
+
+# --- Updated Backward Pass ---
 def fp_smooth(x, y, q, u, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
-    dpn = -prox_R0minus_smooth(vn)
+    dpn = -prox_R0minus_smooth(vn)  # Smooth Normal
+    
     vt = -y[0] + rT*(u[0] + x[2])
-    dpt = -prox_CT(vt, mu*dpn)
+    
+    # USE THE NEW SMOOTH FRICTION HERE
+    dpt = -prox_CT_smooth(vt, mu*dpn) 
+    
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
 
@@ -185,8 +199,7 @@ if __name__ == "__main__":
     ax3.legend()
     ax3.grid(True)
     
-    plt.tight_layout()
-    plt.show()
+    # REMOVED: plt.show() here to prevent blocking
 
     # Figure 2: Sensitivities
     fig2, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -210,4 +223,6 @@ if __name__ == "__main__":
 
     fig2.suptitle(r"Sensitivity of Position $q(t)$ to Initial Velocity $u(0)$")
     plt.tight_layout()
+    
+    # FINAL SHOW: Displays all created figures at once
     plt.show()
