@@ -12,7 +12,7 @@ mu = 0.1        # High friction
 T_end = 1.5     # 1.5 seconds
 tol = 1e-6
 W = jnp.array([[1.0, 0.0], [0.0, 1.0]]) 
-EPSILON = 5  # Stable "Beanbag" parameter
+EPSILON = 1     # Stable "Beanbag" parameter
 
 # --- 2. Physics Helpers ---
 @jax.jit
@@ -41,7 +41,6 @@ def J_x_fun(x, y, qk, uk):
 
 # --- 3. Solvers ---
 def solve_newton(yk, qk, uk, x_init):
-    """Inner Newton solver (Forward Mode Differentiable)"""
     def cond(s): return jnp.logical_and(s[2] < 100, jnp.logical_not(s[3]))
     def body(s):
         x, _, i, _ = s
@@ -59,31 +58,15 @@ def fp_hard(x, y, q, u, rT, rN):
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
 
-# --- New Helper ---
-@jax.jit
-def prox_CT_smooth(x, limit):
-    """Smooth approximation of Coulomb Friction using Tanh"""
-    # limit * tanh(x / limit) approximates clip(x, -limit, limit)
-    # The '3.0' factor makes the slope steeper near zero (closer to true stick)
-    safe_lim = limit + 1e-6
-    return safe_lim * jnp.tanh(x / safe_lim)
-
-# --- Updated Backward Pass ---
 def fp_smooth(x, y, q, u, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
-    dpn = -prox_R0minus_smooth(vn)  # Smooth Normal
-    
+    dpn = -prox_R0minus_smooth(vn)
     vt = -y[0] + rT*(u[0] + x[2])
-    
-    # USE THE NEW SMOOTH FRICTION HERE
-    dpt = -prox_CT_smooth(vt, mu*dpn) 
-    
+    dpt = -prox_CT(vt, mu*dpn)
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
 
-# --- 4. Differentiable Contact Solver (FIXED) ---
-
-# FIX: Removed 'nondiff_argnums'. All args are now treated as differentiable inputs.
+# --- 4. Differentiable Contact Solver ---
 @jax.custom_jvp
 def solve_contact(x_guess, y_guess, qk, uk, rT, rN):
     def cond(s): return jnp.logical_and(s[4] < 1000, jnp.logical_not(s[5]))
@@ -94,32 +77,62 @@ def solve_contact(x_guess, y_guess, qk, uk, rT, rN):
     init = (x_guess, y_guess, x_guess, y_guess, 0, False)
     final = lax.while_loop(cond, body, init)
     return final[0], final[1], final[4].astype(jnp.float32)
+ 
+# --- 1. Define the Halo Activation ---
+HALO_RADIUS = 1# e.g., 50cm activation radius
 
+@jax.jit
+def prox_R0minus_halo(x):
+    """
+    Shifted Softplus. 
+    Activates gradients when gap < HALO_RADIUS (even if gap > 0).
+    """
+    # The physical gap is 'x'. We pretend the gap is 'x - radius'.
+    # If x = 0.4 and radius = 0.5, input becomes -0.1 (penetration), generating force/gradient.
+    shifted_x = x - HALO_RADIUS
+    return -EPSILON * lax.log(1.0 + lax.exp(-shifted_x / EPSILON))
+
+# --- 2. Define the Halo Physics Step ---
+def fp_halo(x, y, q, u, rT, rN):
+    """
+    Same as fp_smooth, but uses the Halo Prox for normal force.
+    Used ONLY in the backward pass.
+    """
+    vn = -y[1] + rN*(q[1] + x[1])
+    
+    # <--- KEY CHANGE: Use Halo Prox here
+    dpn = -prox_R0minus_halo(vn) 
+    
+    vt = -y[0] + rT*(u[0] + x[2])
+    dpt = -prox_CT(vt, mu*dpn)
+    y_new = jnp.array([dpt, dpn])
+    return solve_newton(y_new, q, u, x), y_new
+
+# --- 3. Modify the JVP (The Backward Pass) ---
 @solve_contact.defjvp
 def solve_contact_jvp(primals, tangents):
-    # FIX: Unpack rT, rN from primals (they are now part of the differentiable signature)
     x_g, y_g, q, u, rT, rN = primals
     dx_g, dy_g, dq, du, drT, drN = tangents
     
-    # 1. Primal Pass
+    # 1. Primal Pass (Forward) - USES TRUE PHYSICS
+    # We use fp_hard (or fp_smooth without halo) so the simulation looks real.
     x_s, y_s, i_s = solve_contact(x_g, y_g, q, u, rT, rN)
     
-    # 2. Implicit Diff
+    # 2. Implicit Diff (Backward) - USES HALO PHYSICS
     def resid_fn(z_flat, q_, u_, rT_, rN_):
         x, y = z_flat[:4], z_flat[4:]
-        xn, yn = fp_smooth(x, y, q_, u_, rT_, rN_)
+        
+        # <--- KEY CHANGE: Use fp_halo here!
+        xn, yn = fp_halo(x, y, q_, u_, rT_, rN_)
+        
         return z_flat - jnp.concatenate([xn, yn])
     
     z_s = jnp.concatenate([x_s, y_s])
     
-    # Jacobian A = dResid/dZ
+    # The rest of the Jacobian logic remains the same...
     A = jax.jacfwd(resid_fn, 0)(z_s, q, u, rT, rN)
-    
-    # Tikhonov Regularization (Stability Fix)
     A_damped = A + 1e-6 * jnp.eye(A.shape[0])
     
-    # RHS = dResid/dParams * dParams
-    # We pass drT and drN even if they are zero, to satisfy JAX tracing
     _, b = jax.jvp(
         lambda q_, u_, rT_, rN_: resid_fn(z_s, q_, u_, rT_, rN_), 
         (q, u, rT, rN), 
@@ -127,11 +140,10 @@ def solve_contact_jvp(primals, tangents):
     )
     
     dz = jnp.linalg.solve(A_damped, -b)
-    
     return (x_s, y_s, i_s), (dz[:4], dz[4:], 0.0)
-
 # --- 5. Simulation ---
 def simulate_trajectory(q0, u0):
+    # Generates t = dt, 2dt, ..., T_end
     t_span = jnp.arange(0, T_end, dt)
     
     def scan_fn(carrier, _):
@@ -150,11 +162,17 @@ def simulate_trajectory(q0, u0):
 
     init = (q0, u0, jnp.zeros(4), jnp.zeros(2))
     _, (q_stack, u_stack) = lax.scan(scan_fn, init, t_span)
-    return q_stack, u_stack
+    
+    # PREPEND Initial Conditions so trajectory includes t=0
+    q_full = jnp.vstack([q0, q_stack])
+    u_full = jnp.vstack([u0, u_stack])
+    
+    return q_full, u_full
 
 def simulate_q_only(q0, u0):
-    q_stack, _ = simulate_trajectory(q0, u0)
-    return q_stack
+    # This wrapper now returns the full trajectory including t=0
+    q_full, _ = simulate_trajectory(q0, u0)
+    return q_full
 
 # --- 6. Execution ---
 if __name__ == "__main__":
@@ -168,7 +186,13 @@ if __name__ == "__main__":
     jac_fn = jax.jit(jax.jacfwd(simulate_q_only, argnums=1))
     jac_traj = jac_fn(q0_val, u0_val)
 
-    t_axis = jnp.arange(0, T_end, dt)
+    # Time axis must now start at 0.0 and have length N+1
+    t_axis = jnp.arange(0, T_end + dt, dt)
+    
+    # Handle potential off-by-one error if floating point math makes arange inclusive/exclusive inconsistent
+    # We ensure t_axis is same length as data
+    if len(t_axis) != len(q_traj):
+        t_axis = jnp.linspace(0, T_end, len(q_traj))
 
     # --- PLOTTING ---
     
@@ -198,8 +222,6 @@ if __name__ == "__main__":
     ax3.set_ylabel("m/s")
     ax3.legend()
     ax3.grid(True)
-    
-    # REMOVED: plt.show() here to prevent blocking
 
     # Figure 2: Sensitivities
     fig2, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -224,5 +246,4 @@ if __name__ == "__main__":
     fig2.suptitle(r"Sensitivity of Position $q(t)$ to Initial Velocity $u(0)$")
     plt.tight_layout()
     
-    # FINAL SHOW: Displays all created figures at once
     plt.show()
