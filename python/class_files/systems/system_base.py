@@ -163,7 +163,7 @@ class System(ABC):
         
         # Scale: dP is Impulse. 
         # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
-        r = 1.0 / (self.dt * diag_G + 1e-8)
+        r = 1.0 / (self.dt * diag_G)
         
         # 2. Solve Contact
         # Initial guess for impulses (dP)
