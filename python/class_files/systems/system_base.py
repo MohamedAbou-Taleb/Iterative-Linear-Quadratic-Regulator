@@ -52,7 +52,7 @@ class System(ABC):
         # --- Defines ---
         
         # Select Integrator
-        if integrator == 'contact_euler':
+        if integrator in ['contact_euler', 'backward_euler']:
             self._f_fcn = self._contact_euler_integrator
             # For contact solver, we rely on jacfwd of the custom_jvp function
             _f_x = jacfwd(self._f_fcn, argnums=0)
@@ -160,7 +160,10 @@ class System(ABC):
         inv_M_k = jnp.linalg.inv(M_k) 
         G = W_k.T @ inv_M_k @ W_k
         diag_G = jnp.diag(G)
-        r = 1.0 / (self.dt * diag_G)
+        
+        # Scale: dP is Impulse. 
+        # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
+        r = 1.0 / (self.dt * diag_G + 1e-8)
         
         # 2. Solve Contact
         # Initial guess for impulses (dP)
@@ -193,7 +196,7 @@ class System(ABC):
             # 1. Position Integration: qk1 = qk + dt * vk1
             res_q = qk1 - qk - self.dt * vk1
             
-            # 2. Velocity Integration: M(vk1 - vk)/dt = h + W*dP
+            # 2. Velocity Integration: M(vk1 - vk) = dt * h + W @ dP
             res_v = M @ (vk1 - vk) - self.dt * h - (W @ dP_val)
             
             return jnp.concatenate([res_q, res_v])
@@ -202,27 +205,32 @@ class System(ABC):
         # Returns d(residual)/dz
         dyn_residual_jac = jacfwd(dyn_residual, argnums=0)
         
-        # --- Inner Newton Solver with Implicit Differentiation ---
-        @jax.custom_jvp
+        # --- Optimization: Pre-compute Fixed Jacobian and LU Factors ---
+        # We evaluate the Jacobian ONCE at the explicit Euler prediction
+        # and reuse it for all inner Newton steps within this timestep.
+        z_guess_init = jnp.concatenate([qk + self.dt*vk, vk])
+        J_fixed = dyn_residual_jac(z_guess_init, dP_guess)
+        # Factorize once. 'lu_piv' is a tuple (LU_matrix, pivots)
+        fixed_lu_piv = lu_factor(J_fixed)
+
+        # --- Inner Newton Solver (Modified Newton using Fixed Jacobian) ---
+        # Note: No @custom_jvp needed here; differentiability is handled by the outer function.
         def solve_dynamics_newton(dP_curr, z_init):
-            # We pass z_init to allow warm-starting from the outer loop
             
             def cond_fun(state):
                 z, iter_i, err = state
-                # Convergence criteria: max 10 iterations OR error < 1e-6
+                # Convergence criteria: max 100 iterations OR error < 1e-5
                 return jnp.logical_and(iter_i < 100, err > 1e-5)
 
             def body_fun(state):
                 z, iter_i, _ = state
-                
                 res = dyn_residual(z, dP_curr)
                 
-                # Use defined Jacobian function
-                jac = dyn_residual_jac(z, dP_curr)
+                # OPTIMIZED: Use re-usable LU factors
+                # This replaces the expensive solve(jac(z), res)
+                delta = -lu_solve(fixed_lu_piv, res)
                 
-                delta = -jnp.linalg.solve(jac, res)
                 z_new = z + delta
-                
                 err_new = jnp.linalg.norm(res)
                 return (z_new, iter_i + 1, err_new)
             
@@ -235,38 +243,17 @@ class System(ABC):
             
             return z_star
 
-        # Define Implicit Differentiation Rule for inner solver
-        @solve_dynamics_newton.defjvp
-        def solve_dynamics_newton_jvp(primals, tangents):
-            dP_curr, z_init = primals
-            ddP, dz_init = tangents
-            
-            # 1. Get Primal Solution
-            z_star = solve_dynamics_newton(dP_curr, z_init)
-            
-            # 2. Apply IFT: dz = - (dRes/dz)^-1 * (dRes/ddP) * ddP
-            # Jacobian wrt z using defined function
-            J_z = dyn_residual_jac(z_star, dP_curr)
-            
-            # Jacobian wrt dP (computed via JVP for generality)
-            _, rhs_val = jax.jvp(lambda p: dyn_residual(z_star, p), (dP_curr,), (ddP,))
-            
-            # Solve for dz
-            dz = -jnp.linalg.solve(J_z, rhs_val)
-            
-            return z_star, dz
-
         # --- Outer Fixed Point Solver for Contact Impulses (dP) ---
         
         def outer_loop_cond(state):
             dP, z, iter_c, err = state
-            # Limit max iterations for contact to 20
-            return jnp.logical_and(iter_c < 20, err > 1e-5)
+            # Limit max iterations
+            return jnp.logical_and(iter_c < 50, err > 1e-5)
             
         def outer_loop_body(state):
             dP_curr, z_prev, iter_c, _ = state
             
-            # 1. Solve Dynamics (Newton) using previous solution as warm-start
+            # 1. Solve Dynamics using pre-computed LU factors
             z_star = solve_dynamics_newton(dP_curr, z_prev)
             qk1 = z_star[:self.n_q]
             vk1 = z_star[self.n_q:]
@@ -280,7 +267,9 @@ class System(ABC):
             for i in range(self.n_c):
                 idx_t = 2*i
                 idx_n = 2*i + 1
-                r_t = r[idx_t]*self.dt
+                
+                # Tangential stiffness requires dt scaling to map velocity -> impulse
+                r_t = r[idx_t]*self.dt 
                 r_n = r[idx_n]
                 
                 # --- Normal Update ---
@@ -303,8 +292,6 @@ class System(ABC):
             return (dP_next, z_star, iter_c + 1, err)
 
         # Initial guess for state (Euler step)
-        z_guess_init = jnp.concatenate([qk + self.dt*vk, vk])
-        
         init_state = (dP_guess, z_guess_init, 0, 1.0)
         final_state = lax.while_loop(outer_loop_cond, outer_loop_body, init_state)
         
@@ -318,13 +305,11 @@ class System(ABC):
 
     @_solve_contact_dynamics.defjvp
     def _solve_contact_dynamics_jvp(self, primals, tangents):
-        # FIXED: 'self' is passed as the first argument because nondiff_argnums=(0,)
-        # primals contains the rest: (qk, vk, uk, r, dP_guess)
+        # FIXED: 'self' is unpacked from primals[0]
         qk, vk, uk, r, dP_guess = primals
         dq, dv, du, dr, ddP = tangents 
         
         # 1. Run Primal Solver
-        # Explicitly pass 'self' to the recursive call
         qk1, vk1, dP_star = self._solve_contact_dynamics(self, qk, vk, uk, r, dP_guess)
         
         # 2. Total Residual Implicit Differentiation
@@ -342,7 +327,8 @@ class System(ABC):
             W = self._contact_jacobian(q_new)
             
             res_q = q_new - q_old - self.dt * v_new
-            res_v = M @ (v_new - v_old) - self.dt * h - self.dt * (W @ dP)
+            # FIXED: Removed self.dt * (W @ dP)
+            res_v = M @ (v_new - v_old) - self.dt * h - (W @ dP)
             
             # --- B. Contact Smooth Residual ---
             gap_val = self._gap_function(q_new)
@@ -352,7 +338,9 @@ class System(ABC):
             for i in range(self.n_c):
                 idx_t = 2*i
                 idx_n = 2*i + 1
-                r_t = r_old[idx_t]
+                
+                # FIX: Ensure gradient logic matches Primal loop logic for r_t
+                r_t = r_old[idx_t] * self.dt 
                 r_n = r_old[idx_n]
                 
                 # Smooth Normal
