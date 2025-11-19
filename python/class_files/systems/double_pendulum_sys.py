@@ -2,19 +2,21 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from typing import Union
+import time 
+from jax import jit, lax 
+import matplotlib.pyplot as plt 
 
-# Import the base class from the same 'systems' package
-from .system_base import System 
+# FIX: Robust import to handle both script execution and module import
+try:
+    # Try relative import (for when imported as a module in run_iLQR...)
+    from .system_base import System
+except ImportError:
+    # Fallback to absolute import (for when running this script directly)
+    from system_base import System
 
 class MyDoublePendulum(System):
     """
-    JAX-based template for a Double Pendulum system.
-    
-    This class implements the multibody dynamics using the
-    M(q)q_ddot + C(q, q_dot) + G(q) = tau form.
-    
-    You must fill in the TODO sections with your specific
-    equations for M, C, and G.
+    JAX-based Double Pendulum system adapted for the Contact-Implicit framework.
     """
     
     def __init__(self, 
@@ -23,7 +25,7 @@ class MyDoublePendulum(System):
                  Q: jnp.ndarray, 
                  R: jnp.ndarray, 
                  Q_f: jnp.ndarray, 
-                 # --- Add your physical parameters ---
+                 # --- Physical parameters ---
                  g: float = 9.81, 
                  m1: float = 1.0, 
                  m2: float = 1.0,
@@ -31,32 +33,21 @@ class MyDoublePendulum(System):
                  l2: float = 1.0,
                  d1: float = 0.01,
                  d2: float = 0.01,
-                 theta1: float = 0.0, # 1/12 m l^2
-                 theta2: float = 0.0,
-                 # --- ---
+                 theta1: float = 0.0, # Inertia term
+                 theta2: float = 0.0, # Inertia term
+                 # --- System settings ---
                  use_jit: bool = True,
-                 integrator: str = 'rk4'):
-        """
-        Constructor for the Double Pendulum system.
-        
-        Args:
-            dt: Time step (s)
-            x_target: Target state [q1, q2, q1_dot, q2_dot]
-            Q: Stage cost state weight matrix (n_x, n_x)
-            R: Stage cost control weight matrix (n_u, n_u)
-            Q_f: Terminal cost state weight matrix (n_x, n_x)
-            g, m1, m2, l1, l2: Physical parameters
-            use_jit: Whether to JIT-compile functions
-            integrator: Integration scheme ('rk4', 'midpoint', 'euler')
-        """
+                 integrator: str = 'rk4',
+                 mu: float = 0.0,
+                 smooth_epsilon: float = 1.0):
         
         # 1. --- Define system properties ---
-        self.n_x = 4  # [q1, q2, q1_dot, q2_dot]
-        self.n_u = 2  # [tau1, tau2] (Assuming actuation on both joints)
-                     # If only one joint is actuated, set n_u = 1 and
-                     # adjust the physics equations accordingly.
+        n_q = 2  # [q1, q2]
+        n_v = 2  # [q1_dot, q2_dot]
+        n_u = 2  # [tau1, tau2]
+        n_c = 0  # No contacts defined for now
         
-        # --- Store physical parameters ---
+        # Store physical parameters
         self.g = g
         self.m1 = m1
         self.m2 = m2
@@ -74,48 +65,86 @@ class MyDoublePendulum(System):
         self.Q_f = jnp.asarray(Q_f)
         
         # 3. --- Call the base class constructor ---
-        super().__init__(self.n_x, self.n_u, dt, 
-                         use_jit=use_jit, 
-                         integrator=integrator)
+        super().__init__(n_q, n_v, n_u, n_c, dt, 
+                         integrator=integrator,
+                         mu=mu,
+                         smooth_epsilon=smooth_epsilon)
         
 
-    # --- Implement the 3 Abstract Methods ---
+    # --- Physics Implementation (M, h, W) ---
 
-    def _f_cont_fcn(self, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
-        """
-        Continuous-time dynamics: x_dot = f(x, u)
+    def _mass_matrix(self, q: jnp.ndarray) -> jnp.ndarray:
+        """Returns M(q) of shape (n_v, n_v)."""
+        q1, q2 = q
         
-        x_dot = [q_dot, q_ddot]
+        # Derived from your provided equations
+        m11 = (self.m1*self.l1**2)/4 + self.m2*self.l1**2 + (self.m2*self.l2**2)/4 + \
+              self.m2*self.l1*self.l2*jnp.cos(q2) + self.theta1 + self.theta2
         
-        Calculates q_ddot by solving the linear system:
-        M(q) * q_ddot = b(q, q_dot, u)
-        """
-        # Unpack state and control
-        q = x[:2]     # [q1, q2]
-        q_dot = x[2:]   # [q1_dot, q2_dot]
-        tau = u       # [tau1, tau2]
+        m12 = (self.m2*self.l2**2)/4 + (self.m2*self.l1*self.l2*jnp.cos(q2))/2 + self.theta2
         
-        # 1. Build the Mass Matrix M(q)
-        M = self._build_mass_matrix(q)
+        m21 = m12
+        m22 = (self.m2*self.l2**2)/4 + self.theta2
         
-        # 2. Build the vector of generalized forces
-        #    b = tau - C(q, q_dot) - G(q)
-        h = self._build_rhs_vector(q, q_dot, tau)
-        
-        # 3. Solve for accelerations
-        #    q_ddot = M_inv * b
-        q_ddot = jnp.linalg.solve(M, h)
-        
-        # 4. Stack derivatives to form x_dot
-        #    x_dot = [q_dot, q_ddot]
-        return jnp.concatenate([q_dot, q_ddot])
+        M = jnp.array([
+            [m11, m12],
+            [m21, m22]
+        ])
+        return M
 
+    def _generalized_forces(self, q: jnp.ndarray, v: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
+        """Returns h(q, v, u) of shape (n_v,)."""
+        # Map inputs to your variables
+        q1, q2 = q
+        q1d, q2d = v
+        tau1, tau2 = u
+        
+        s1 = jnp.sin(q1)
+        s2 = jnp.sin(q2)
+        s12 = jnp.sin(q1 + q2)
+        
+        # Coriolis / Centripetal Terms (rhs)
+        f_c1 =  (self.m2*self.l1*self.l2*s2*(2*q1d*q2d + q2d**2))/2
+        f_c2 = -(self.m2*self.l1*self.l2*s2*(q1d**2))/2
+        f_c = jnp.array([f_c1, f_c2])
+
+        # Gravity Terms (rhs forces)
+        f_g1 = -self.m2*self.g*(self.l2*s12/2 + self.l1*s1) - (self.m1*self.g*self.l1*s1)/2
+        f_g2 = -self.m2*self.g*(self.l2*s12/2)
+        f_g = jnp.array([f_g1, f_g2])
+
+        # Damping Terms
+        f_d1 = -self.d1*q1d
+        f_d2 = -self.d2*q2d
+        f_d = jnp.array([f_d1, f_d2])
+
+        # Actuation
+        f_act = jnp.array([tau1, tau2])
+
+        # Total generalized forces h where M*v_dot = h
+        h = f_act + f_c + f_g + f_d
+        
+        return h
+
+    def _contact_jacobian(self, q: jnp.ndarray) -> jnp.ndarray:
+        """Returns W(q) of shape (n_v, 2*n_c)."""
+        # No contacts -> Empty matrix of shape (2, 0)
+        return jnp.zeros((self.n_v, 0))
+        
+    def _gap_function(self, q: jnp.ndarray) -> jnp.ndarray:
+        """Returns gap vector g(q) of shape (n_c,)."""
+        # No contacts -> Empty vector
+        return jnp.zeros((0,))
+        
+    def _contact_velocity_function(self, q: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
+        """Returns tangential contact velocity gamma(q, v) of shape (n_c,)."""
+        # No contacts -> Empty vector
+        return jnp.zeros((0,))
+
+    # --- Cost Implementation ---
 
     def _l_fcn(self, x: jnp.ndarray, u: jnp.ndarray) -> float:
-        """
-        Stage cost.
-        (This is a standard quadratic cost, modify as needed)
-        """
+        """Stage cost."""
         dx = x - self.x_target
         cost_x = 0.5 * dx.T @ self.Q @ dx
         cost_u = 0.5 * u.T @ self.R @ u
@@ -123,84 +152,56 @@ class MyDoublePendulum(System):
         val = (cost_x + cost_u) * self.dt 
         return val
 
-
     def _l_f_fcn(self, x: jnp.ndarray) -> float:
-        """
-        Terminal cost.
-        (This is a standard quadratic cost, modify as needed)
-        """
+        """Terminal cost."""
         dx = x - self.x_target
         val = 0.5 * dx.T @ self.Q_f @ dx
         return val
 
-    # --- Physics Helper Methods (FILL THESE IN) ---
-
-    def _build_mass_matrix(self, q: jnp.ndarray) -> jnp.ndarray:
-        """
-        Builds the 2x2 Mass Matrix M(q).
-        
-        Args:
-            q: Joint positions [q1, q2]
-            
-        Returns:
-            M: 2x2 Mass Matrix
-        """
-        q1, q2 = q
-        
-        m11 = (self.m1*self.l1**2)/4 + self.m2*self.l1**2 + (self.m2*self.l2**2)/4 + self.m2*self.l1*self.l2*jnp.cos(q2) + self.theta1 + self.theta2
-        m12 = (self.m2*self.l2**2)/4 + (self.m2*self.l1*self.l2*jnp.cos(q2))/2 + self.theta2
-        m21 = m12
-        m22 = (self.m2*self.l2**2)/4 + self.theta2
-        M = jnp.array([
-            [m11, m12],
-            [m21, m22]
-        ])
-
-        
-        return M
-
-    def _build_rhs_vector(self, q: jnp.ndarray, q_dot: jnp.ndarray, tau: jnp.ndarray) -> jnp.ndarray:
-        """
-        Builds the right-hand-side vector b(q, q_dot, tau)
-        where:
-        b = tau - C(q, q_dot) - G(q)
-        
-        C = Coriolis/Centripetal vector
-        G = Gravity vector
-        tau = Control torque vector
-        
-        Args:
-            q: Joint positions [q1, q2]
-            q_dot: Joint velocities [q1_dot, q2_dot]
-            tau: Joint torques [tau1, tau2]
-            
-        Returns:
-            b: 2x1 RHS vector
-        """
-        q1, q2 = q
-        q1d, q2d = q_dot
-        tau1, tau2 = tau
-        
-        # --- JAX-ified equations for h1 and h2 ---
-        
-        s1 = jnp.sin(q1)
-        s2 = jnp.sin(q2)
-        s12 = jnp.sin(q1 + q2)
-        
-        f_c1 =  (self.m2*self.l1*self.l2*s2*(2*q1d*q2d + q2d**2))/2
-        f_c2 = -(self.m2*self.l1*self.l2*s2*(q1d**2))/2
-        f_c = jnp.array([f_c1, f_c2])
-
-        f_g1 = -self.m2*self.g*(self.l2*s12/2 + self.l1*s1) - (self.m1*self.g*self.l1*s1)/2
-        f_g2 = -self.m2*self.g*(self.l2*s12)/2
-        f_g = jnp.array([f_g1, f_g2])
-
-        f_d1 = -self.d1*q1d
-        f_d2 = -self.d2*q2d
-        f_d = jnp.array([f_d1, f_d2])
-
-        f_act = jnp.array([tau1, tau2])
-
-        h = f_act + f_c + f_g + f_d
-        
-        return h
+# --- Simulation Test ---
+if __name__ == "__main__":
+    # Parameters
+    dt = 0.01
+    # Target: Both links upright [pi, 0, 0, 0] if using relative angles where 0 is extended
+    # Or whatever your coordinate convention is. Assuming q1=pi is up, q2=0 is straight relative.
+    x_target = jnp.array([jnp.pi, 0.0, 0.0, 0.0]) 
+    
+    Q = jnp.diag(jnp.array([10.0, 10.0, 1.0, 1.0]))
+    R = jnp.diag(jnp.array([0.1, 0.1]))
+    Q_f = jnp.diag(jnp.array([100.0, 100.0, 10.0, 10.0]))
+    
+    x_0 = jnp.array([jnp.pi/2, 0.0, 0.0, 0.0]) # Start hanging down
+    u_0 = jnp.array([0.0, 0.0])           # No torque
+    
+    print("--- Testing 'rk4' (Double Pendulum) ---")
+    sys_dp = MyDoublePendulum(dt=dt, x_target=x_target, Q=Q, R=R, Q_f=Q_f, integrator='rk4')
+    
+    x_next = sys_dp.f_fcn(x_0, u_0)
+    print(f"Current state: {x_0}")
+    print(f"Next state (RK4, zero input): {x_next}")
+    
+    # Test derivatives
+    print("\nCalculating derivatives (f_x)...")
+    f_x = sys_dp.f_x_fcn(x_0, u_0)
+    print(f"f_x shape: {f_x.shape}")
+    
+    # Simulation
+    print("\nSimulating free fall...")
+    T_sim = 2.0
+    N_sim = int(T_sim / dt)
+    
+    X_hist = [x_0]
+    curr_x = x_0
+    for _ in range(N_sim):
+        curr_x = sys_dp.f_fcn(curr_x, u_0)
+        X_hist.append(curr_x)
+    
+    X_hist = np.array(X_hist)
+    
+    plt.figure(figsize=(10, 6))
+    plt.plot(X_hist[:, 0], label="q1")
+    plt.plot(X_hist[:, 1], label="q2")
+    plt.legend()
+    plt.title("Double Pendulum Free Fall")
+    plt.grid(True)
+    plt.show()

@@ -60,7 +60,7 @@ def main():
         x_target=x_target,
         Q=Q, R=R, Q_f=Q_f,
         g=g, l=l, d=d,
-        integrator='backward_euler', # Use Euler for the optimizer
+        integrator='contact_euler', # Use Euler for the optimizer
         use_jit=True
     )
     
@@ -70,7 +70,7 @@ def main():
         x_target=x_target,
         Q=Q, R=R, Q_f=Q_f,
         g=g, l=l, d=d,
-        integrator='midpoint', # Use RK4 for the "real" plant
+        integrator='contact_euler', # Use RK4 for the "real" plant
         use_jit=True
     )
     

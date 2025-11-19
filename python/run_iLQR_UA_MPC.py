@@ -78,7 +78,7 @@ def main():
         Q=Q, R=R, Q_f=Q_f,
         g=g, m1=m1, m2=m2, l1=l1, l2=l2, d1=d1, d2=d2,
         theta1=theta1, theta2=theta2,
-        integrator='rk4', # <-- Use Euler for MPC speed
+        integrator='contact_euler', # <-- Use Euler for MPC speed
         use_jit=True
     )
     
@@ -90,7 +90,7 @@ def main():
         Q=Q, R=R, Q_f=Q_f,
         g=g, m1=m1, m2=m2, l1=l1, l2=l2, d1=d1, d2=d2,
         theta1=theta1, theta2=theta2,
-        integrator='backward_euler', # <-- Use RK4 for simulation accuracy
+        integrator='contact_euler', # <-- Use RK4 for simulation accuracy
         use_jit=True
     )
     
