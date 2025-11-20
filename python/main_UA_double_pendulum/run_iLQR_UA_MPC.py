@@ -100,7 +100,7 @@ def main():
         T=T_horizon,
         x_0=x_0,
         U_init=U_init,
-        tol=tol,
+        tol=1e-5,
         maxiter=maxiter,
         verbose=True # <-- Set to False for silent operation
     )

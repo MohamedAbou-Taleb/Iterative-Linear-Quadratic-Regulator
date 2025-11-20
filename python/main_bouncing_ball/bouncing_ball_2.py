@@ -58,15 +58,22 @@ def fp_hard(x, y, q, u, rT, rN):
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
 
+# --- New Helper ---
+@jax.jit
+
+# --- Updated Backward Pass ---
 def fp_smooth(x, y, q, u, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
-    dpn = -prox_R0minus_smooth(vn)
+    dpn = -prox_R0minus_smooth(vn)  # Smooth Normal
+    
     vt = -y[0] + rT*(u[0] + x[2])
-    dpt = -prox_CT(vt, mu*dpn)
+    
+    # USE THE NEW SMOOTH FRICTION HERE
+    dpt = -prox_CT(vt, mu*dpn) 
+    
     y_new = jnp.array([dpt, dpn])
     return solve_newton(y_new, q, u, x), y_new
-
-# --- 4. Differentiable Contact Solver ---
+# --- 4. Differentiable Contact Solver ---                 
 @jax.custom_jvp
 def solve_contact(x_guess, y_guess, qk, uk, rT, rN):
     def cond(s): return jnp.logical_and(s[4] < 1000, jnp.logical_not(s[5]))
@@ -79,7 +86,7 @@ def solve_contact(x_guess, y_guess, qk, uk, rT, rN):
     return final[0], final[1], final[4].astype(jnp.float32)
  
 # --- 1. Define the Halo Activation ---
-HALO_RADIUS = 1# e.g., 50cm activation radius
+HALO_RADIUS = 0# e.g., 50cm activation radius
 
 @jax.jit
 def prox_R0minus_halo(x):

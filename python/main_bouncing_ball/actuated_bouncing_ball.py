@@ -40,6 +40,7 @@ def J_x_fun(x, y, qk, uk, tauk):
     return jax.jacfwd(lambda x_: R_x(x_, y, qk, uk, tauk))(x)
 
 # --- 3. Solvers ---
+@jax.custom_jvp
 def solve_newton(yk, qk, uk, tauk, x_init):
     def cond(s): return jnp.logical_and(s[2] < 100, jnp.logical_not(s[3]))
     def body(s):
@@ -49,6 +50,47 @@ def solve_newton(yk, qk, uk, tauk, x_init):
         delta = jnp.linalg.solve(jac, resid)
         return (x - delta, x, i + 1, jnp.linalg.norm(delta) < tol)
     return lax.while_loop(cond, body, (x_init, x_init, 0, False))[0]
+
+@solve_newton.defjvp
+def solve_newton_jvp(primals, tangents):
+    # Primals: (yk, qk, uk, tauk, x_init)
+    # Tangents: (dyk, dqk, duk, dtauk, dx_init)
+    yk, qk, uk, tauk, x_init = primals
+    dyk, dqk, duk, dtauk, dx_init = tangents
+
+    # 1. Solve the primal problem (get the converged solution x_bar)
+    x_bar = solve_newton(yk, qk, uk, tauk, x_init)
+    
+    # The derivative wrt x_init is zero since the converged solution 
+    # should be independent of the initial guess, assuming convergence.
+    # We will ignore dx_init in the JVP calculation.
+
+    # 2. Get the Jacobian of R w.r.t x evaluated at the solution x_bar
+    # This is J_x = dR/dx, which is the 'jac' from the while_loop.
+    J_x = J_x_fun(x_bar, yk, qk, uk, tauk)
+
+    # 3. Compute the JVP of R w.r.t. parameters p = (yk, qk, uk, tauk)
+    # R_p * dot_p = dR/dp * dot_p 
+    # This is done by applying jvp to R_x w.r.t the parameters (yk, qk, uk, tauk)
+    
+    # Define a helper function for R_x w.r.t. parameters for JVP
+    def R_params(p1, p2, p3, p4, x_fixed):
+        return R_x(x_fixed, p1, p2, p3, p4)
+
+    # Compute the JVP of R_x w.r.t. the parameters (yk, qk, uk, tauk)
+    # The primal output of the JVP is R(x_bar, p) which should be near zero.
+    # The tangent output is (dR/dp) * dot_p
+    _, R_p_dot_p = jax.jvp(
+        lambda p1, p2, p3, p4: R_params(p1, p2, p3, p4, x_bar),
+        (yk, qk, uk, tauk),
+        (dyk, dqk, duk, dtauk)
+    )
+
+    # 4. Solve the linear system for the JVP (dot_x)
+    # J_x * dot_x = - (dR/dp) * dot_p
+    dot_x = jnp.linalg.solve(J_x, -R_p_dot_p)
+
+    return x_bar, dot_x
 
 def fp_hard(x, y, q, u, tauk, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
@@ -144,7 +186,7 @@ def simulate_u_only(q0, u0, tau):
 
 # --- 6. Execution ---
 if __name__ == "__main__":
-    q0_val = jnp.array([0.0, 1.0])
+    q0_val = jnp.array([0.0, -0.0])
     u0_val = jnp.array([1.0, 0.0])
     tau_val = 0.0 
 
