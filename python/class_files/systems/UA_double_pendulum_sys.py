@@ -37,13 +37,15 @@ class MyUADoublePendulum(System):
                  use_jit: bool = True,
                  integrator: str = 'rk4',
                  mu: float = 0.0,
-                 smooth_epsilon: float = 1.0):
+                 smooth_epsilon: float = 1.0,
+                 d_wall: float = 0.1,
+                 e_restitution=jnp.array([0.0, 0.0])):
         
         # 1. --- Define system properties ---
         n_q = 2  # [q1, q2]
         n_v = 2  # [q1_dot, q2_dot]
         n_u = 1  # [tau1] - Underactuated
-        n_c = 0  # No contacts
+        n_c = 2  # No contacts
         
         self.g = g
         self.m1 = m1
@@ -65,8 +67,10 @@ class MyUADoublePendulum(System):
         super().__init__(n_q, n_v, n_u, n_c, dt, 
                          integrator=integrator,
                          mu=mu,
-                         smooth_epsilon=smooth_epsilon)
-
+                         smooth_epsilon=smooth_epsilon,
+                         e_restitution=e_restitution)
+        
+        self.d_wall = d_wall
     # --- Physics Implementation ---
 
     def _mass_matrix(self, q: jnp.ndarray) -> jnp.ndarray:
@@ -113,16 +117,28 @@ class MyUADoublePendulum(System):
 
         return f_act + f_c + f_g + f_d
 
-    # --- Contact Placeholders (Empty for n_c=0) ---
     def _contact_jacobian(self, q: jnp.ndarray) -> jnp.ndarray:
-        return jnp.zeros((self.n_v, 0))
+        """Returns W(q) of shape (n_v, 2*n_c)."""
+        w_T1 = jnp.array([self.l1 * jnp.sin(q[0]), 0])
+        w_N1 = jnp.array([-self.l1 * jnp.cos(q[0]), 0])
+        w_T2 = jnp.array([self.l2 * jnp.sin(q[0] + q[1]) + self.l1 * jnp.sin(q[0]), self.l2 + jnp.sin(q[0] + q[1])])
+        w_N2 = jnp.array([-self.l2*jnp.cos(q[0] + q[1]) - self.l1 * jnp.cos(q[0]), -self.l2 * jnp.cos(q[0] + q[1])])
+        W = jnp.vstack([w_T1.T, w_N1.T, w_T2.T, w_N2.T]).T
+        return W
         
     def _gap_function(self, q: jnp.ndarray) -> jnp.ndarray:
-        return jnp.zeros((0,))
+        """Returns gap vector g(q) of shape (n_c,)."""
+        g_N1 = self.d_wall - self.l1 * jnp.sin(q[0])
+        g_N2 = self.d_wall - self.l2 * jnp.sin(q[0] + q[1]) - self.l1 * jnp.sin(q[0])
+        g_N = jnp.array([g_N1, g_N2])
+        return g_N
         
     def _contact_velocity_function(self, q: jnp.ndarray, v: jnp.ndarray) -> jnp.ndarray:
-        return jnp.zeros((0,))
-
+        """Returns tangential contact velocity gamma(q, v) of shape (n_c,)."""
+        gamma_T1 = v[0] * self.l1 * jnp.sin(q[0])
+        gamma_T2 = -v[0]*( self.l2 * jnp.cos(q[0] + q[1]) + self.l1 * jnp.cos(q[0]) ) - v[1] * self.l2 * jnp.cos(q[0] + q[1])
+        gamma_T = jnp.array([gamma_T1, gamma_T2])
+        return gamma_T
     # --- Cost ---
 
     def _l_fcn(self, x: jnp.ndarray, u: jnp.ndarray) -> float:
@@ -143,7 +159,7 @@ if __name__ == "__main__":
     R = jnp.eye(1)
     Q_f = jnp.eye(4) * 10
     
-    sys = MyUADoublePendulum(dt, x_target, Q, R, Q_f)
+    sys = MyUADoublePendulum(dt, x_target, Q, R, Q_f, e_restitution=jnp.array([0.0, 0.0]))
     x0 = jnp.zeros(4)
     u0 = jnp.array([1.0])
     
