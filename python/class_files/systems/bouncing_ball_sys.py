@@ -3,7 +3,7 @@ from system_base import System
 import jax
 
 class BouncingBallSystem(System):
-    def __init__(self, dt=0.01, mu=0.1, smooth_epsilon=1.0):
+    def __init__(self, dt=0.01, mu=0.1, smooth_epsilon=1.0, e_restitution=jnp.array([0.0])):
         # 2D Bouncing Ball
         # q = [x, y]
         # v = [vx, vy]
@@ -14,9 +14,10 @@ class BouncingBallSystem(System):
         n_c = 1 # One contact (ground)
         
         super().__init__(n_q, n_v, n_u, n_c, dt, 
-                         integrator='contact_euler', # Use the new integrator
+                         integrator='elastic_contact_euler', # Use the new integrator
                          mu=mu, 
-                         smooth_epsilon=smooth_epsilon)
+                         smooth_epsilon=smooth_epsilon,
+                         e_restitution=e_restitution)
         
         self.mass = 1.0
         self.g = 9.81
@@ -47,6 +48,7 @@ class BouncingBallSystem(System):
     def _gap_function(self, q):
         # Gap is simply the Y height
         return jnp.array([q[1]])
+    
 
     def _contact_velocity_function(self, q, v):
         # Tangential velocity is vx
@@ -72,7 +74,7 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     
     # Create system
-    sys = BouncingBallSystem(dt=0.01)
+    sys = BouncingBallSystem(dt=0.01, e_restitution=jnp.array([1.0]))
     
     # Initial state: x=0, y=1.0, vx=1.0, vy=0
     x0 = jnp.array([0.0, 1.0, 1.0, 0.0])

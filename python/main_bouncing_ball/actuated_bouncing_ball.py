@@ -9,7 +9,7 @@ m = 1.0
 dt = 0.01
 g = 9.81
 mu = 0.1        # Low friction
-T_end = 1.5     # 1.5 seconds
+T_end = 5     # 1.5 seconds
 tol = 1e-6
 W = jnp.array([[1.0, 0.0], [0.0, 1.0]]) 
 EPSILON = 1     # Stable "Beanbag" parameter
@@ -94,7 +94,11 @@ def solve_newton_jvp(primals, tangents):
 
 def fp_hard(x, y, q, u, tauk, rT, rN):
     vn = -y[1] + rN*(q[1] + x[1])
-    dpn = -prox_R0minus(vn)
+    gap = q[1] + dt*u[1]/2
+    gamma_N = x[3] + u[1]   
+    xi_N = gamma_N + 1*u[1]
+    dpn_contact = -prox_R0minus(-y[1] + dt*rN*xi_N)
+    dpn = jnp.where(gap > 0.0, 0.0, dpn_contact)
     vt = -y[0] + rT*(u[0] + x[2])
     dpt = -prox_CT(vt, mu*dpn)
     y_new = jnp.array([dpt, dpn])
@@ -186,7 +190,7 @@ def simulate_u_only(q0, u0, tau):
 
 # --- 6. Execution ---
 if __name__ == "__main__":
-    q0_val = jnp.array([0.0, -0.0])
+    q0_val = jnp.array([0.0, 1.0])
     u0_val = jnp.array([1.0, 0.0])
     tau_val = 0.0 
 
