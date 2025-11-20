@@ -14,7 +14,7 @@ class AnimationDoublePendulum:
         self.width2 = self.l2 * 0.05
         self.height1 = self.l1 * 0.05
         self.height2 = self.l2 * 0.05
-        
+        self.d_wall = double_pendulum_sys.d_wall
         self.X_data = X_data
         self.q = self.X_data[0:2, :]
         self.tspan = tspan
@@ -44,6 +44,7 @@ class AnimationDoublePendulum:
         self.H_IB_joint_1 = vtk.vtkMatrix4x4()
         self.H_IB_joint_2 = vtk.vtkMatrix4x4()
         self.H_IB_floor = vtk.vtkMatrix4x4()
+        self.H_IB_wall = vtk.vtkMatrix4x4()
 
     def compute_positions(self, q):
         q1 = q[0, :]
@@ -95,6 +96,16 @@ class AnimationDoublePendulum:
             mapper_floor = vtk.vtkPolyDataMapper(); mapper_floor.SetInputConnection(tf_filter_floor.GetOutputPort())
             actor_floor = vtk.vtkActor(); actor_floor.SetMapper(mapper_floor); actor_floor.GetProperty().SetColor([0,0,0])  
 
+            # Wall
+            wall = vtk.vtkCubeSource()
+            wall.SetXLength(0.02); wall.SetYLength(2*(self.l1 + self.l2)); wall.SetZLength(0.2)
+            _H_IB_wall = vtk.vtkMatrixToLinearTransform(); _H_IB_wall.SetInput(self.H_IB_wall)
+            tf_filter_wall = vtk.vtkTransformPolyDataFilter()
+            tf_filter_wall.SetInputConnection(wall.GetOutputPort()); tf_filter_wall.SetTransform(_H_IB_wall)
+            mapper_wall = vtk.vtkPolyDataMapper(); mapper_wall.SetInputConnection(tf_filter_wall.GetOutputPort())
+            actor_wall = vtk.vtkActor(); actor_wall.SetMapper(mapper_wall); actor_wall.GetProperty().SetColor([0,0,0])  
+            actor_wall.SetPosition(self.d_wall, -1, 0)
+
             # Pendulum 2
             pend_2 = vtk.vtkCubeSource()
             pend_2.SetXLength(self.width2); pend_2.SetYLength(self.l2); pend_2.SetZLength(self.height2)
@@ -131,7 +142,7 @@ class AnimationDoublePendulum:
 
             # --- Renderer & Window ---
             self.renderer = vtk.vtkRenderer()
-            self.renderer.AddActor(actor_1); self.renderer.AddActor(actor_2); self.renderer.AddActor(actor_floor)
+            self.renderer.AddActor(actor_1); self.renderer.AddActor(actor_2); self.renderer.AddActor(actor_floor); self.renderer.AddActor(actor_wall)
             self.renderer.AddActor(joint_actor_1); self.renderer.AddActor(joint_actor_2); self.renderer.AddActor(self.text_actor)
             self.renderer.SetBackground(1,1,1) 
             
@@ -286,11 +297,11 @@ class AnimationDoublePendulum:
 
 if __name__ == "__main__":
     class MyDoublePendulum:
-        def __init__(self, dt, g):
-            self.l1 = 1.0; self.l2 = 1.0; self.dt = dt; self.g = g
+        def __init__(self, dt, g, d_wall):
+            self.l1 = 1.0; self.l2 = 1.0; self.dt = dt; self.g = g; self.d_wall = d_wall
 
     import numpy as jnp 
-    pend = MyDoublePendulum(dt=0.01, g=9.81)
+    pend = MyDoublePendulum(dt=0.01, g=9.81, d_wall = 0.1)
     
     T = 5.0
     dt = 0.01
@@ -305,6 +316,6 @@ if __name__ == "__main__":
     # --- CONFIGURATION ---
     # save_video=False -> Full Real-Time Live View
     # save_video=True  -> High Quality Smooth Rendering (Slow process, smooth file)
-    anim.animate(save_video=True, 
+    anim.animate(save_video=False, 
                  filename="final_pendulum.mp4", 
                  fullscreen=True)

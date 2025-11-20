@@ -7,6 +7,7 @@ import time
 from class_files.systems.system_base import System
 from class_files.systems.double_pendulum_sys import MyDoublePendulum # <-- Import MyDoublePendulum
 from class_files.iLQR_class import iLQR
+from class_files.animations.animation_double_pendulum import AnimationDoublePendulum
 
 def main():
     # =========================================================================
@@ -14,7 +15,7 @@ def main():
     # =========================================================================
     print("Setting up double pendulum parameters...")
     dt = 0.01
-    T = 5.0  # Longer horizon for the harder problem
+    T = 4  # Longer horizon for the harder problem
     tspan = jnp.arange(0, T + dt, dt)
     N = len(tspan) - 1
     
@@ -38,20 +39,20 @@ def main():
     
     # Cost parameters
     # Penalize position error and control effort
-    Q = jnp.diag(jnp.array([10.0, 10.0, 0.1, 0.1]))
-    R = jnp.diag(jnp.array([0.1, 0.1]))
+    Q = jnp.diag(jnp.array([1.0, 1.0, 0.1, 0.1]))
+    R = jnp.diag(jnp.array([0.1, 1.0]))
     Q_f = jnp.diag(jnp.array([1000.0, 1000.0, 100.0, 100.0])) # High terminal cost
     
     # Target: "up-up" position
-    x_target = jnp.array([jnp.pi, 0.0, 0.0, 0.0])
+    x_target = jnp.array([-jnp.pi, 0.0, 0.0, 0.0])
     # Initial state: "down-down" position
-    x_0 = jnp.array([0.0, 0.0, 0.0, 0.0])
+    x_0 = jnp.array([-jnp.pi/4, 0.0, 0.0, 0.0])
     
     # Initial control guess (zero)
     U_init = jnp.zeros((n_u, N))
     
     # Solver settings
-    tol = 1e-6
+    tol = 1e-5
     maxiter = 200 # More iterations for the harder problem
     
     # =========================================================================
@@ -65,7 +66,9 @@ def main():
         Q=Q, R=R, Q_f=Q_f,
         g=g, m1=m1, m2=m2, l1=l1, l2=l2, d1=d1, d2=d2,
         theta1=theta1, theta2=theta2, # <-- Pass the calculated MOI
-        integrator='contact_euler', # Use RK4 for better accuracy
+        d_wall = 0.1,
+        e_restitution=jnp.array([1.0, 1.0]),
+        integrator='elastic_contact_euler', # Use RK4 for better accuracy
         use_jit=True
     )
     
@@ -163,6 +166,9 @@ def main():
     
     plt.tight_layout(rect=[0, 0.03, 1, 0.96])
     plt.show()
+
+    anim = AnimationDoublePendulum(double_pendulum_sys, X_bar, tspan, dt)
+    anim.animate(fullscreen=True, save_video=False, filename="double_pendulum_swing_up.mp4")
 
 if __name__ == "__main__":
     main()

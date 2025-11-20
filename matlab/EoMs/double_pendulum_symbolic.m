@@ -54,3 +54,31 @@ f_NP = W1*M_act1 + W2*M_act2 + W1*M_d1 + W2*M_d2;
 h = simplify(f_cg + f_NP);
 
 ddqdt = simplify(M\h);
+
+%% introduce a wall
+syms d_wall real
+I_r_owall = [d_wall; 0; 0];
+I_r_oTip =  [l1*sin(q1) + l2*sin(q1+q2);
+            -l1*cos(q1) - l2*cos(q1+q2);
+            0];
+I_r_ojoint = [l1*sin(q1);
+            -l1*cos(q1);
+            0];
+I_v_Tip = jacobian(I_r_oTip, q)*dqdt;
+I_v_joint = jacobian(I_r_ojoint, q)*dqdt;
+
+I_v_wall = [0;0;0];
+I_n_wall = [-1; 0; 0];
+I_t_wall = [0; 1; 0];
+g_N1 = I_n_wall'*(I_r_ojoint - I_r_owall);
+w_N1 = jacobian(g_N1, q)';
+g_N2 = I_n_wall'*(I_r_oTip - I_r_owall);
+w_N2 = jacobian(g_N2, q)';
+
+gamma_N1 = simplify(jacobian(g_N1, q)*dqdt);
+gamma_T1 = simplify(I_t_wall'*(I_v_joint - I_v_wall));
+w_T1 = jacobian(gamma_T1, dqdt)';
+gamma_N2 = simplify(jacobian(g_N2, q)*dqdt);
+gamma_T2 = simplify(I_t_wall'*(I_v_Tip - I_v_wall));
+w_T2 = jacobian(gamma_T2, dqdt)';
+W = simplify([w_T1, w_N1, w_T2, w_N2]);

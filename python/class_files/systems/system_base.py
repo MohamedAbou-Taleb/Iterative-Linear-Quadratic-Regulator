@@ -494,7 +494,7 @@ class System(ABC):
         def outer_loop_cond(state):
             dP, z, iter_c, err = state
             # Limit max iterations
-            return jnp.logical_and(iter_c < 50, err > 1e-5)
+            return jnp.logical_and(iter_c < 500, err > 1e-5)
             
         def outer_loop_body(state):
             dP_curr, z_prev, iter_c, _ = state
