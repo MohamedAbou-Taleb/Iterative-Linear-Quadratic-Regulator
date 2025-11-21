@@ -21,16 +21,16 @@ def main():
     x_box_target = jnp.array([0.0, box_height/2, 0.0, 0.0])
     
     R = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
-    Q_box = jnp.diag(jnp.array([100.0, 100.0, 0.0, 0.0]))
+    Q_box = jnp.diag(jnp.array([100.0, 1.0, 0.0, 0.0]))
     Q_f = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
-    RN1 = 0.0; RN2 = 0.0; RN1_f = 0.0; RN2_f = 0.0
+    RN1 = 0.5; RN2 = 0.5; RN1_f = 0.0; RN2_f = 0.0
     m_box = 0.5
     m_ball = 1
 
     
     # --- Initial State ---
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
-    q_box_x_0 = -0.5
+    q_box_x_0 = +0.5
     q_0 = jnp.array([-(box_width/2 + ball_radius) + q_box_x_0 - 0.2, 0.1, box_width/2 + ball_radius+ q_box_x_0 + 0.5, 0.1, q_box_x_0, box_height/2]) # Box starts high (0.5)
     v_0 = jnp.zeros(6,)
     x_0 = jnp.hstack([q_0, v_0])
@@ -55,7 +55,7 @@ def main():
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([0.0, 0.0, 0.0])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([0.0, 0.0, 0.01])) # mu=0.0 for box-floor to slide
     
     ilqr_solver = iLQR(
         system=manipulator,
