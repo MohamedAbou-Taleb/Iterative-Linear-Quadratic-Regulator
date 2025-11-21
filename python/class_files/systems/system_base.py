@@ -36,7 +36,7 @@ class System(ABC):
                  n_c: int, # Number of contacts
                  dt: float, 
                  integrator: str = 'rk4',
-                 mu: float = 0.5,  # Friction coefficient
+                 mu: jnp.ndarray = jnp.array([0.0]),  # Friction coefficient
                  e_restitution: jnp.ndarray = jnp.array([0.0]), # Coefficient of restitution per contact
                  smooth_epsilon: float = 1.0): # Smoothing parameter for gradients
         
@@ -280,14 +280,14 @@ class System(ABC):
                 # Tangential stiffness requires dt scaling to map velocity -> impulse
                 r_t = r[idx_t]*self.dt 
                 r_n = r[idx_n]
-                
+                mu_i = self.mu[i]
                 # --- Normal Update ---
                 target_n = dP_curr[idx_n] - r_n * gap_val[i]
                 dP_n = -prox_R0minus(-target_n)
                 
                 # --- Tangent Update ---
                 vt = rel_vel[idx_t]
-                limit = self.mu * dP_n
+                limit = mu_i * dP_n
                 dP_t = -prox_CT(-dP_curr[idx_t] + r_t * vt, limit)
                 
                 dP_new_list.append(dP_t)
@@ -351,7 +351,7 @@ class System(ABC):
                 # FIX: Ensure gradient logic matches Primal loop logic for r_t
                 r_t = r_old[idx_t] * self.dt 
                 r_n = r_old[idx_n]
-                
+                mu_i = self.mu[i]
                 # Smooth Normal
                 target_n = dP[idx_n] - r_n * gap_val[i]
                 dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
@@ -359,7 +359,7 @@ class System(ABC):
                 # Smooth Tangent
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
-                limit = self.mu * dP_n_new
+                limit = mu_i * dP_n_new
                 dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
                 
                 dP_smooth_list.append(dP_t_new)
@@ -521,6 +521,7 @@ class System(ABC):
                 r_t = r[idx_t]*self.dt 
                 r_n = r[idx_n]*self.dt
                 e_restitution = self.e_restitution[i]
+                mu_i = self.mu[i]
                 # --- Normal Update ---
                 gamma_N_next = W_next.T[idx_n] @ vk1
                 xi_N = gamma_N_next + e_restitution * self._contact_jacobian(qk_mid)[:, idx_n].T @ vk
@@ -530,7 +531,7 @@ class System(ABC):
                 
                 # --- Tangent Update ---
                 vt = rel_vel[idx_t]
-                limit = self.mu * dP_n
+                limit = mu_i * dP_n
                 dP_t = -prox_CT(-dP_curr[idx_t] + r_t * vt, limit)
                 
                 dP_new_list.append(dP_t)
@@ -594,6 +595,7 @@ class System(ABC):
                 # FIX: Ensure gradient logic matches Primal loop logic for r_t
                 r_t = r_old[idx_t] * self.dt 
                 r_n = r_old[idx_n] * self.dt
+                mu_i = self.mu[i]
                 
                 # Smooth Normal
                 target_n = dP[idx_n] - r_n * gap_val[i]
@@ -603,7 +605,7 @@ class System(ABC):
                 # Smooth Tangent
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
-                limit = self.mu * dP_n_new
+                limit = mu_i * dP_n_new
                 dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
                 
                 dP_smooth_list.append(dP_t_new)

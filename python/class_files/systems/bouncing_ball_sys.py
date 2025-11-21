@@ -3,7 +3,7 @@ from system_base import System
 import jax
 
 class BouncingBallSystem(System):
-    def __init__(self, dt=0.01, mu=0.1, smooth_epsilon=1.0, e_restitution=jnp.array([0.0])):
+    def __init__(self, dt=0.01, mu=jnp.array([0.1]), smooth_epsilon=1.0, e_restitution=jnp.array([0.0])):
         # 2D Bouncing Ball
         # q = [x, y]
         # v = [vx, vy]

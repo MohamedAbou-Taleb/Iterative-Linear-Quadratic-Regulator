@@ -39,7 +39,7 @@ class MyDoublePendulum(System):
                  # --- System settings ---
                  use_jit: bool = True,
                  integrator: str = 'rk4',
-                 mu: float = 0.0,
+                 mu: float = jnp.array([0.0, 0.0]),
                  smooth_epsilon: float = 1.0,
                  d_wall: float = 0.1,
                  e_restitution=jnp.array([0.0, 0.0])):
@@ -183,11 +183,14 @@ if __name__ == "__main__":
     R = jnp.diag(jnp.array([0.1, 0.1]))
     Q_f = jnp.diag(jnp.array([100.0, 100.0, 10.0, 10.0]))
     
-    x_0 = jnp.array([-jnp.pi/2, -1.0, 2.0, 0.0]) # Start hanging down
+    x_0 = jnp.array([-jnp.pi/8, -1.0, 2.0, 0.0]) # Start hanging down
     u_0 = jnp.array([0.0, 0.0])           # No torque
     
     print("--- Testing 'rk4' (Double Pendulum) ---")
-    sys_dp = MyDoublePendulum(dt=dt, d1= 0.5, d2=0.2, x_target=x_target, Q=Q, R=R, Q_f=Q_f, integrator='contact_euler', e_restitution=jnp.array([0.0, 0.0]), d_wall=0.3, mu=0.3)
+    sys_dp = MyDoublePendulum(dt=dt, d1= 0.5, d2=0.2, x_target=x_target, Q=Q, R=R, Q_f=Q_f, integrator='contact_euler', 
+                              e_restitution=jnp.array([0.0, 0.0]), 
+                              d_wall=0.3, 
+                              mu=jnp.array([0.3]))
     
     x_next = sys_dp.f_fcn(x_0, u_0)
     print(f"Current state: {x_0}")

@@ -36,7 +36,7 @@ class MyUADoublePendulum(System):
                  # --- System settings ---
                  use_jit: bool = True,
                  integrator: str = 'rk4',
-                 mu: float = 0.0,
+                 mu: float = jnp.array([0.0, 0.0]),
                  smooth_epsilon: float = 1.0,
                  d_wall: float = 0.1,
                  e_restitution=jnp.array([0.0, 0.0])):
