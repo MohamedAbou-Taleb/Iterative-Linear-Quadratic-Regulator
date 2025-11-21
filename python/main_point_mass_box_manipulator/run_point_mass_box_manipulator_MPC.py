@@ -30,10 +30,10 @@ def main():
     box_width = 0.5
     box_height = 0.3
     ball_radius = 0.05
-    x_box_target = jnp.array([0.0, box_height/2, 0.0, 0.0])
+    x_box_target = jnp.array([0.0, 1*box_height/2, 0.0, 0.0])
     
     R = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
-    Q_box = jnp.diag(jnp.array([100.0, 1.0, 0.0, 0.0]))
+    Q_box = jnp.diag(jnp.array([100.0, 10.0, 0.0, 0.0]))
     Q_f = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
     RN1 = 50; RN2 = 5; RN1_f = 0.0; RN2_f = 0.0
     m_box = 0.5
@@ -62,19 +62,22 @@ def main():
     # Solver settings
     tol = 1e-5
     maxiter = 700 # More iterations for the harder problem
-
+    mu_ball = 0.0
+    mu_ball_real = 0.0
+    mu_floor = 0.0
+    mu_floor_real = 0.0
         # --- Instantiate System ---
     manipulator = MyPointMassBoxManipulator(dt=dt, 
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='contact_euler',
+                                            integrator='moreau',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([0.0, 0.0, 0.1])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([mu_ball, mu_ball, mu_floor])) # mu=0.0 for box-floor to slide
     
     
     
@@ -84,13 +87,13 @@ def main():
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='contact_euler',
+                                            integrator='elastic_contact_euler',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([0.0, 0.0, 0.1])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([mu_ball_real, mu_ball_real, mu_floor_real])) # mu=0.0 for box-floor to slide
     
     ilqr_solver = iLQR(
         system=manipulator,

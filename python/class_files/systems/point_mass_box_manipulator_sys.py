@@ -139,7 +139,7 @@ if __name__ == "__main__":
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='contact_euler',
+                                            integrator='moreau',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
@@ -149,7 +149,9 @@ if __name__ == "__main__":
     
     # --- Initial State ---
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
-    q_0 = jnp.array([-(box_width/2 + ball_radius), 0.1, box_width/2 + ball_radius, 0.1, 0.0, box_height/2]) # Box starts high (0.5)
+    q_0 = jnp.array([-(box_width/2 + ball_radius) -0.1, 0.1,
+                      box_width/2 + ball_radius + 0.1, 0.1, 
+                      0.0, 2*box_height/2]) # Box starts high (0.5)
     v_0 = jnp.zeros(6,)
     x_0 = jnp.hstack([q_0, v_0])
     
@@ -165,7 +167,7 @@ if __name__ == "__main__":
     X_hist = [x_0]
     x_curr = x_0
     u_zero = jnp.zeros(4,) # No actuation on balls
-    u_zero = jnp.array([100.0, 0.2, -100.0, 0.2])
+    # u_zero = jnp.array([100.0, 0.2, -100.0, 0.2])
     start_time = time.time()
     for _ in range(N_sim):
         x_curr = manipulator.f_fcn(x_curr, u_zero)
@@ -177,9 +179,9 @@ if __name__ == "__main__":
     
     # --- Plotting (Optional) ---
     plt.figure(figsize=(8, 5))
-    plt.plot(X_hist[:, 5], label="Box Y") # Plot Box Height
+    plt.plot(tspan, X_hist[:, 5], label="Box Y") # Plot Box Height
     plt.title("Box Height over Time (Gravity Drop)")
-    plt.xlabel("Step")
+    plt.xlabel("Time [s]")
     plt.ylabel("Y Position")
     plt.grid(True)
     plt.legend()

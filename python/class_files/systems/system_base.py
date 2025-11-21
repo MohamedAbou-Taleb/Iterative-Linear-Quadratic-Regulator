@@ -65,6 +65,12 @@ class System(ABC):
             # For contact solver, we rely on jacfwd of the custom_jvp function
             _f_x = jacfwd(self._f_fcn, argnums=0)
             _f_u = jacfwd(self._f_fcn, argnums=1)
+
+        elif integrator in ['moreau']:
+            self._f_fcn = self._moreau_integrator
+            # For contact solver, we rely on jacfwd of the custom_jvp function
+            _f_x = jacfwd(self._f_fcn, argnums=0)
+            _f_u = jacfwd(self._f_fcn, argnums=1)
         
             
         elif integrator in ['rk4', 'midpoint', 'euler']:
@@ -534,7 +540,7 @@ class System(ABC):
                 vt = rel_vel[idx_t]
                 limit = mu_i * dP_n
                 dP_t = -prox_CT(-dP_curr[idx_t] + r_t * vt, limit)
-                
+
                 dP_new_list.append(dP_t)
                 dP_new_list.append(dP_n)
                 
@@ -602,12 +608,14 @@ class System(ABC):
                 target_n = dP[idx_n] - r_n * gap_val[i]
                 # dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
                 dP_n_new = -prox_R0minus(-target_n)
+                dP_n_new = jnp.where(gap_val[i] > 0.0, 0.0, dP_n_new)
                 
                 # Smooth Tangent
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
                 limit = mu_i * dP_n_new
                 dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
+                # dP_t_new = prox_CT(-target_t, limit)
                 
                 dP_smooth_list.append(dP_t_new)
                 dP_smooth_list.append(dP_n_new)
@@ -642,6 +650,189 @@ class System(ABC):
         ddP_star = d_z_total[self.n_x:]
         
         return (qk1, vk1, dP_star), (dqk1, dvk1, ddP_star)
+
+
+    def _moreau_integrator(self, x_state, u_control):
+        qk = x_state[:self.n_q]
+        vk = x_state[self.n_q:]
+        
+        # 1. Compute Effective Mass / Stiffness for conditioning (Approximation at k)
+        M_k = self._mass_matrix(qk)
+        W_k = self._contact_jacobian(qk) 
+        inv_M_k = jnp.linalg.inv(M_k) 
+        G = W_k.T @ inv_M_k @ W_k
+        diag_G = jnp.diag(G)
+        
+        # Scale: dP is Impulse. 
+        # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
+        r = 1.0 / (self.dt * diag_G)
+        
+        # 2. Solve Contact
+        # Initial guess for impulses (dP)
+        dP_guess = jnp.zeros(W_k.shape[1])
+        
+        # Pass 'self' explicitly because the custom_jvp decorated function 
+        # is treated as a static function by JAX
+        q_next, v_next, _ = self._solve_moreau_contact_dynamics(
+            self, qk, vk, u_control, r, dP_guess
+        )
+        
+        return jnp.concatenate([q_next, v_next])
+
+    @partial(jax.custom_jvp, nondiff_argnums=(0,))
+    def _solve_moreau_contact_dynamics(self, qk, vk, uk, r, dP_guess):
+        """
+        Primal solver: Nested Fixed Point (Contact) -> Newton (Dynamics)
+        Uses dP (Impulse) as the contact variable.
+        """
+        qk_mid = qk + self.dt*vk/2
+        M = self._mass_matrix(qk_mid)
+        W = self._contact_jacobian(qk_mid)
+        h = self._generalized_forces(qk_mid, vk, uk)
+        invM = jnp.linalg.inv(M)
+        gap_val = self._gap_function(qk_mid)
+        
+        def outer_loop_cond(state):
+            dP, z, iter_c, err = state
+            # Limit max iterations
+            return jnp.logical_and(iter_c < 500, err > 1e-5)
+            
+        def outer_loop_body(state):
+            dP_curr, z_prev, iter_c, _ = state
+            
+            # vk_prev = z_prev[:self.n_v]
+            vk_prev = vk
+            vk1 = vk_prev + invM @ (self.dt*h + W @ dP_curr)
+            qk1 = qk_mid + self.dt*vk1/2
+            z_star = jnp.hstack([qk1, vk1])
+            rel_vel = W.T @ vk1
+            dP_new_list = []
+            for i in range(self.n_c):
+                idx_t = 2*i
+                idx_n = 2*i + 1
+                
+                # Tangential stiffness requires dt scaling to map velocity -> impulse
+                r_t = r[idx_t]*self.dt 
+                r_n = r[idx_n]*self.dt
+                e_restitution = self.e_restitution[i]
+                mu_i = self.mu[i]
+                # --- Normal Update ---
+                gamma_N_next = W.T[idx_n] @ vk1
+                xi_N = gamma_N_next + e_restitution * W[:, idx_n].T @ vk_prev
+                target_n = dP_curr[idx_n] - r_n * xi_N
+                dP_n_contact = -prox_R0minus(-dP_curr[idx_n] + r_n*xi_N)
+                dP_n = jnp.where(gap_val[i] > 0.0, 0.0, dP_n_contact)
+                
+                # --- Tangent Update ---
+                vt = rel_vel[idx_t]
+                limit = mu_i * dP_n
+                
+                dP_t = -prox_CT(-dP_curr[idx_t] + r_t * vt, limit)
+                
+                dP_new_list.append(dP_t)
+                dP_new_list.append(dP_n)
+                
+            dP_next = jnp.array(dP_new_list)
+            
+            # Check convergence
+            err = jnp.linalg.norm(dP_next - dP_curr)
+            vk1 = vk_prev + invM @ (self.dt*h + W @ dP_next)
+            qk1 = qk_mid + self.dt*vk1/2
+            z_star = jnp.hstack([qk1, vk1])
+            return (dP_next, z_star, iter_c + 1, err)
+        z_guess_init = jnp.concatenate([qk, vk])
+        # Initial guess for state (Euler step)
+        init_state = (dP_guess, z_guess_init, 0, 1.0)
+        final_state = lax.while_loop(outer_loop_cond, outer_loop_body, init_state)
+        
+        final_dP = final_state[0]
+        
+        # Ensure final state is consistent (run one last dynamics solve)
+        vk1_fin = vk + invM @ (self.dt*h + W @ final_dP)
+        qk1_fin = qk_mid + self.dt*vk1_fin/2
+        # z_star_fin = jnp.hstack([qk1_fin, vk1_fin])
+        return qk1_fin, vk1_fin, final_dP
+
+    @_solve_moreau_contact_dynamics.defjvp
+    def _solve_moreau_contact_dynamics_jvp(self, primals, tangents):
+        qk, vk, uk, r, dP_guess = primals
+        dq, dv, du, dr, ddP = tangents 
+        
+        # 1. Run Primal Solver
+        qk1, vk1, dP_star = self._solve_moreau_contact_dynamics(self, qk, vk, uk, r, dP_guess)
+        
+        # 2. Total Residual Implicit Differentiation
+        def total_smooth_residual(z_total, q_old, v_old, u_old, r_old):
+            q_new = z_total[:self.n_q]
+            v_new = z_total[self.n_q:self.n_x]
+            dP = z_total[self.n_x:]
+            
+            # Reconstruct constants used in the step
+            qk_mid = q_old + self.dt * v_old / 2
+            M = self._mass_matrix(qk_mid)
+            h = self._generalized_forces(qk_mid, v_old, u_old)
+            W = self._contact_jacobian(qk_mid)
+            
+            # 1. Dynamics Residuals
+            # q_new = qk_mid + dt * v_new / 2
+            res_q = q_new - (qk_mid + self.dt * v_new / 2)
+            
+            # M(v_new - v_old) = dt*h + W @ dP
+            res_v = M @ (v_new - v_old) - self.dt * h - (W @ dP)
+            gap_val = self._gap_function(qk_mid)
+            # 2. Contact Residuals
+            rel_vel = W.T @ v_new
+            dP_smooth_list = []
+            for i in range(self.n_c):
+                idx_t = 2*i; idx_n = 2*i + 1
+                r_t = r_old[idx_t] * self.dt 
+                r_n = r_old[idx_n] * self.dt
+                mu_i = self.mu[i]
+                e_rest = self.e_restitution[i]
+                
+                # Normal (Velocity based)
+                xi_N = W[:, idx_n].T @ v_new + e_rest * W[:, idx_n].T @ v_old
+                target_n = dP[idx_n] - r_n * xi_N
+                
+                # Use smooth prox for gradients
+                dP_n_new = -prox_R0minus(-target_n)
+                dP_n_new = jnp.where(gap_val[i] > 0.0, 0.0, dP_n_new)
+
+                # Tangent
+                vt = rel_vel[idx_t]
+                target_t = dP[idx_t] - r_t * vt
+                limit = mu_i * dP_n_new
+                dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
+                # dP_t_new = prox_CT(-target_t, limit)
+                
+                dP_smooth_list.append(dP_t_new)
+                dP_smooth_list.append(dP_n_new)
+            
+            res_dP = dP - jnp.array(dP_smooth_list)
+            return jnp.concatenate([res_q, res_v, res_dP])
+
+        z_star_total = jnp.concatenate([qk1, vk1, dP_star])
+        params = (qk, vk, uk, r)
+        d_params = (dq, dv, du, dr)
+        
+        # Compute Jacobian of Residual w.r.t Solution (z)
+        J_z = jacfwd(total_smooth_residual, argnums=0)(z_star_total, *params)
+        
+        # Compute JVP of Residual w.r.t Parameters (p)
+        _, rhs_val = jax.jvp(
+            lambda *p: total_smooth_residual(z_star_total, *p),
+            params, d_params
+        )
+        
+        # Solve for total variation dz
+        d_z_total = -jnp.linalg.solve(J_z , rhs_val)
+        
+        dqk1 = d_z_total[:self.n_q]
+        dvk1 = d_z_total[self.n_q:self.n_x]
+        ddP_star = d_z_total[self.n_x:]
+        
+        return (qk1, vk1, dP_star), (dqk1, dvk1, ddP_star)
+        
 
 
     # =========================================================
