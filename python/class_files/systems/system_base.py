@@ -354,7 +354,8 @@ class System(ABC):
                 mu_i = self.mu[i]
                 # Smooth Normal
                 target_n = dP[idx_n] - r_n * gap_val[i]
-                dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
+                # dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
+                dP_n_new = -prox_R0minus(-target_n)
                 
                 # Smooth Tangent
                 vt = rel_vel[idx_t]
