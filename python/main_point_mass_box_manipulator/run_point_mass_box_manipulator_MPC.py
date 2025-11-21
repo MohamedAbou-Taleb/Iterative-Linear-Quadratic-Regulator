@@ -10,11 +10,23 @@ from class_files.iLQR_class import iLQR
 from class_files.animations.animation_point_mass_box import AnimationPointMassBox
 
 def main():
-    print("Setting up double pendulum parameters...")
+    # =========================================================================
+    # --- 1. System Parameters ---
+    # =========================================================================
+    print("Setting up MPC parameters for double pendulum...")
+    
     dt = 0.01
-    T = 6.0  # Longer horizon for the harder problem
-    tspan = jnp.arange(0, T + dt, dt)
-    N = len(tspan) - 1
+    # --- MPC Horizon Settings ---
+    # T_horizon = 1 # Time horizon for each MPC solve
+    T_horizon = 2  # Time horizon for each MPC solve
+    tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
+    N_horizon = len(tspan_horizon) - 1
+    
+    # --- Simulation Settings ---
+    T_sim = 3.0 # Total simulation time
+    tspan_sim = jnp.arange(0, T_sim + dt, dt)
+    N_sim = len(tspan_sim) - 1
+    
     box_width = 0.5
     box_height = 0.3
     ball_radius = 0.05
@@ -31,12 +43,19 @@ def main():
     # --- Initial State ---
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
     q_box_x_0 = +0.5
-    q_0 = jnp.array([-(box_width/2 + ball_radius) + q_box_x_0 - 0.2, 0.1, box_width/2 + ball_radius+ q_box_x_0 + 0.5, 0.1, q_box_x_0, box_height/2]) # Box starts high (0.5)
+    q_0 = jnp.array([-(box_width/2 + ball_radius) + q_box_x_0 - 0.2, 0.1,
+                      box_width/2 + ball_radius+ q_box_x_0 + 0.5, 0.1,
+                        q_box_x_0, box_height/2])
     v_0 = jnp.zeros(6,)
     x_0 = jnp.hstack([q_0, v_0])
-    n_x = 6
+    n_x = 12
     n_u = 4
-    U_init = jnp.zeros((n_u, N))
+    
+    # Solver settings
+    tol = 1e-5
+    maxiter = 50 # Low maxiter for MPC speed
+    
+    U_init = jnp.zeros((n_u, N_horizon))
     # U_init= jnp.vstack([10*jnp.ones((1, N)), jnp.zeros((3, N))])
     
     print(f"Initial State: {x_0}")
@@ -49,17 +68,33 @@ def main():
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='elastic_contact_euler',
+                                            integrator='contact_euler',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([0.0, 0.0, 0.01])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([0.0, 0.0, 0.1])) # mu=0.0 for box-floor to slide
+    
+    
+    
+    # "Real-world" simulation system
+    # Use a high-fidelity integrator for the "real" plant
+    manipulator_sim = MyPointMassBoxManipulator(dt=dt, 
+                                            box_target_state=x_box_target, 
+                                            R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
+                                            Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
+                                            integrator='contact_euler',
+                                            box_height=box_height,
+                                            box_width=box_width,
+                                            ball_radius=ball_radius,
+                                            m_box=m_box,
+                                            m_ball=m_ball,
+                                            mu=jnp.array([0.0, 0.0, 0.1])) # mu=0.0 for box-floor to slide
     
     ilqr_solver = iLQR(
         system=manipulator,
-        T=T,
+        T=T_horizon,
         x_0=x_0,
         U_init=U_init,
         tol=tol,
@@ -70,18 +105,17 @@ def main():
     # =========================================================================
     # --- 3. JIT Warm-up ---
     # =========================================================================
-    print("Warming up JIT-compiled functions...")
+    print("Warming up JIT-compiled solver...")
     
     # 1. Warm up the backward pass
-    X_warmup = jnp.zeros_like(ilqr_solver.X)
-    U_warmup = jnp.zeros_like(ilqr_solver.U)
+    X_warmup = jnp.zeros((n_x, N_horizon + 1))
+    U_warmup = jnp.zeros((n_u, N_horizon))
     ilqr_solver.backward_pass(X_warmup, U_warmup)[0].block_until_ready()
     
     # 2. Warm up the forward pass
-    U_ff_warmup = jnp.zeros_like(ilqr_solver.U_ff)
-    K_warmup = jnp.zeros_like(ilqr_solver.K)
+    U_ff_warmup = jnp.zeros((n_u, N_horizon))
+    K_warmup = jnp.zeros((N_horizon, n_u, n_x))
     
-    # Pass the initial state x_0 as an argument
     ilqr_solver.forward_pass(
         ilqr_solver.x_0, 0.0, X_warmup, U_warmup, U_ff_warmup, K_warmup
     )[0].block_until_ready()
@@ -89,25 +123,67 @@ def main():
     print("Warm-up complete.")
 
     # =========================================================================
-    # --- 4. Run iLQR Solver (Timed) ---
+    # --- 4. MPC Simulation Loop ---
     # =========================================================================
-    print("Running iLQR solve for double pendulum swing-up...")
-
-    start_time_ilqr = time.time()
-    X_bar, U_bar, cost_ilqr = ilqr_solver.optimize_trajectory()
-    elapsed_time_ilqr = time.time() - start_time_ilqr
+    print("Running MPC simulation for double pendulum...")
     
-    print(f"Time taken to execute iLQR: {elapsed_time_ilqr:.4f} seconds")
+    # Storage for simulation results
+    X_sim = jnp.zeros((n_x, N_sim + 1))
+    U_sim = jnp.zeros((n_u, N_sim))
+    
+    # Initialize simulation
+    current_x = x_0
+    X_sim = X_sim.at[:, 0].set(current_x)
+    
+    # U_guess will be the "warm start" for the next iteration
+    U_guess = U_init
+    
+    start_time_mpc = time.time()
+    
+    for k in range(N_sim):
+        # 1. Update the solver's initial state
+        ilqr_solver.x_0 = current_x
+        
+        # 2. Provide the warm-start control guess
+        ilqr_solver.U = U_guess
+        
+        # 3. Solve the optimization problem
+        X_bar, U_bar, cost = ilqr_solver.optimize_trajectory()
+        
+        # 4. Get the first control input
+        uk = U_bar[:, 0]
+        # uk = jnp.array([0.0, 0.0])  # No control for testing
+        
+        # 5. Simulate the "real" system one step forward
+        xkPlusOne = manipulator_sim.f_fcn(current_x, uk)
+        
+        # 6. Store results
+        U_sim = U_sim.at[:, k].set(uk)
+        X_sim = X_sim.at[:, k+1].set(xkPlusOne)
+        
+        # 7. Prepare warm start for next iteration (shift U_bar)
+        U_guess = jnp.concatenate([U_bar[:, 1:], U_bar[:, -1:]], axis=1)
+        
+        # 8. Update the current state
+        current_x = xkPlusOne
+        
+        if (k+1) % 100 == 0:
+            print(f"MPC Step {k+1}/{N_sim}...")
+
+    elapsed_time_mpc = time.time() - start_time_mpc
+    print(f"MPC simulation finished.")
+    print(f"Total MPC time: {elapsed_time_mpc:.4f} seconds")
+    print(f"Average time per step: {elapsed_time_mpc / N_sim:.5f} seconds")
 
 
-# =========================================================================
+    # =========================================================================
     # --- 5. Plotting ---
     # =========================================================================
     print("Plotting results...")
     
     # Convert JAX arrays to Numpy for plotting
-    X_plot = X_bar.T
-    t_plot = tspan
+    X_plot = X_sim.T
+    t_plot = tspan_sim
     
     # Ensure lengths match (truncate X if it has one more step than t, or vice versa)
     if len(X_plot) > len(t_plot):
@@ -116,7 +192,7 @@ def main():
         t_plot = t_plot[:len(X_plot)]
 
     fig, axes = plt.subplots(3, 2, figsize=(10, 5), sharex=True)
-    fig.suptitle(f"Positions over Time (T={T}s)", fontsize=16)
+    fig.suptitle(f"Positions over Time (T={T_sim}s)", fontsize=16)
 
     # --- Ball 1 (Left) ---
     axes[0, 0].plot(t_plot, X_plot[:, 0], 'b-', linewidth=2, label=r'$x_{b1}$')
@@ -167,7 +243,7 @@ def main():
     # --- 6. Plotting Controls ---
     # =========================================================================
     print("Plotting control inputs...")
-    U_plot = U_bar.T
+    U_plot = U_sim.T
     
     
     # Create time array for controls (length N)
@@ -204,8 +280,9 @@ def main():
     plt.tight_layout()
     plt.show()
 
-    anim = AnimationPointMassBox(manipulator, X_bar, tspan, dt)
+    anim = AnimationPointMassBox(manipulator, X_sim, tspan_sim, dt)
     anim.animate(fullscreen=True, save_video=False, filename='box_manipulation.mp4')
+
 
 if __name__ == "__main__":
     main()
