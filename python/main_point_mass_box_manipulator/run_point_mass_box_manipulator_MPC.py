@@ -62,10 +62,11 @@ def main():
     # Solver settings
     tol = 1e-5
     maxiter = 700 # More iterations for the harder problem
-    mu_ball = 0.0
-    mu_ball_real = 0.0
-    mu_floor = 0.0
-    mu_floor_real = 0.0
+    mu_ball = 0.1
+    mu_ball_real = 0.1
+    mu_floor = 0.1
+    mu_floor_real = 0.1
+    reg_friction = jnp.array([1e-2, 1e-2, 1e-2])*1e-4
         # --- Instantiate System ---
     manipulator = MyPointMassBoxManipulator(dt=dt, 
                                             box_target_state=x_box_target, 
@@ -77,7 +78,8 @@ def main():
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([mu_ball, mu_ball, mu_floor])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([mu_ball, mu_ball, mu_floor]),
+                                            reg_friction=reg_friction) # mu=0.0 for box-floor to slide
     
     
     

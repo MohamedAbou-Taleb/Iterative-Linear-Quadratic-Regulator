@@ -39,7 +39,8 @@ class MyUADoublePendulum(System):
                  mu: float = jnp.array([0.0, 0.0]),
                  smooth_epsilon: float = 1.0,
                  d_wall: float = 0.1,
-                 e_restitution=jnp.array([0.0, 0.0])):
+                 e_restitution=jnp.array([0.0, 0.0]),
+                 **kwargs):
         
         # 1. --- Define system properties ---
         n_q = 2  # [q1, q2]
@@ -68,7 +69,8 @@ class MyUADoublePendulum(System):
                          integrator=integrator,
                          mu=mu,
                          smooth_epsilon=smooth_epsilon,
-                         e_restitution=e_restitution)
+                         e_restitution=e_restitution,
+                         **kwargs)
         
         self.d_wall = d_wall
     # --- Physics Implementation ---

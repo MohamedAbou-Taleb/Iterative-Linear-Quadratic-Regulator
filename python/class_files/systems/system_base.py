@@ -38,7 +38,8 @@ class System(ABC):
                  integrator: str = 'rk4',
                  mu: jnp.ndarray = jnp.array([0.0]),  # Friction coefficient
                  e_restitution: jnp.ndarray = jnp.array([0.0]), # Coefficient of restitution per contact
-                 smooth_epsilon: float = 1.0): # Smoothing parameter for gradients
+                 smooth_epsilon: float = 1.0,
+                 reg_friction: jnp.ndarray = None): # Smoothing parameter for gradients
         
         self.n_q = n_q
         self.n_v = n_v
@@ -50,6 +51,11 @@ class System(ABC):
         self.e_restitution = e_restitution
         self.epsilon = smooth_epsilon
         self.integrator_name = integrator
+
+        if reg_friction is None:
+            self.reg_friction = 1e-6*jnp.ones(n_c,)
+        else:
+            self.reg_friction = reg_friction
 
         # --- Defines ---
         
@@ -367,7 +373,8 @@ class System(ABC):
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
                 limit = mu_i * dP_n_new
-                dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
+                reg_friction_i = self.reg_friction[i]
+                dP_t_new = limit * jnp.tanh(target_t / (limit + reg_friction_i))
                 
                 dP_smooth_list.append(dP_t_new)
                 dP_smooth_list.append(dP_n_new)
@@ -614,7 +621,8 @@ class System(ABC):
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
                 limit = mu_i * dP_n_new
-                dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
+                reg_friction_i = self.reg_friction[i]
+                dP_t_new = limit * jnp.tanh(target_t / (limit + reg_friction_i))
                 # dP_t_new = prox_CT(-target_t, limit)
                 
                 dP_smooth_list.append(dP_t_new)
@@ -802,7 +810,8 @@ class System(ABC):
                 vt = rel_vel[idx_t]
                 target_t = dP[idx_t] - r_t * vt
                 limit = mu_i * dP_n_new
-                dP_t_new = limit * jnp.tanh(target_t / (limit + 1e-6))
+                reg_friction_i = self.reg_friction[i]
+                dP_t_new = limit * jnp.tanh(target_t / (limit + reg_friction_i))
                 # dP_t_new = prox_CT(-target_t, limit)
                 
                 dP_smooth_list.append(dP_t_new)

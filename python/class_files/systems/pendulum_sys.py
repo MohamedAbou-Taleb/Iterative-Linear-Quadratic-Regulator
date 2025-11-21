@@ -31,7 +31,8 @@ class MyPendulum(System):
                  use_jit: bool = True,
                  integrator: str = 'rk4',
                  mu: float = 0.0,
-                 smooth_epsilon: float = 1.0):
+                 smooth_epsilon: float = 1.0,
+                 **kwargs):
         
         # 1. --- Define system properties ---
         n_q = 1  # [theta]
@@ -53,7 +54,8 @@ class MyPendulum(System):
         super().__init__(n_q, n_v, n_u, n_c, dt, 
                          integrator=integrator,
                          mu=mu,
-                         smooth_epsilon=smooth_epsilon)
+                         smooth_epsilon=smooth_epsilon,
+                         **kwargs)
 
     # --- Physics Implementation (M, h, W) ---
 

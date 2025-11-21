@@ -36,7 +36,8 @@ class MyPointMassBoxManipulator(System):
                  integrator: str = 'contact_euler',
                  mu: jnp.ndarray = jnp.array([0.3, 0.3, 0.0]),
                  smooth_epsilon: float = 1.0,
-                 e_restitution=jnp.array([0.0, 0.0, 0.0])):
+                 e_restitution=jnp.array([0.0, 0.0, 0.0]),
+                 **kwargs):
         n_q = 6
         n_v = 6
         n_u = 4
@@ -62,7 +63,8 @@ class MyPointMassBoxManipulator(System):
                          integrator=integrator,
                          mu=mu,
                          smooth_epsilon=smooth_epsilon,
-                         e_restitution=e_restitution)
+                         e_restitution=e_restitution,
+                         **kwargs)
 
 
     def _mass_matrix(self, q):
@@ -134,6 +136,7 @@ if __name__ == "__main__":
     RN1 = 1.0; RN2 = 1.0; RN1_f = 1.0; RN2_f = 1.0
     m_box = 0.5
     m_ball = 1
+    reg_friction = jnp.array([1e-2, 1e-2, 1e-2])
     # --- Instantiate System ---
     manipulator = MyPointMassBoxManipulator(dt=dt, 
                                             box_target_state=x_box_target, 
@@ -145,7 +148,8 @@ if __name__ == "__main__":
                                             ball_radius=ball_radius,
                                             m_box=m_box,
                                             m_ball=m_ball,
-                                            mu=jnp.array([0.3, 0.3, 0.0])) # mu=0.0 for box-floor to slide
+                                            mu=jnp.array([0.3, 0.3, 0.0]),
+                                            reg_friction=reg_friction) # mu=0.0 for box-floor to slide
     
     # --- Initial State ---
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
