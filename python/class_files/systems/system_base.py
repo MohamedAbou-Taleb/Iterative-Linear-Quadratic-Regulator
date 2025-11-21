@@ -593,11 +593,12 @@ class System(ABC):
                 
                 # FIX: Ensure gradient logic matches Primal loop logic for r_t
                 r_t = r_old[idx_t] * self.dt 
-                r_n = r_old[idx_n]
+                r_n = r_old[idx_n] * self.dt
                 
                 # Smooth Normal
                 target_n = dP[idx_n] - r_n * gap_val[i]
-                dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
+                # dP_n_new = -prox_R0minus_smooth(-target_n, self.epsilon)
+                dP_n_new = -prox_R0minus(-target_n)
                 
                 # Smooth Tangent
                 vt = rel_vel[idx_t]
