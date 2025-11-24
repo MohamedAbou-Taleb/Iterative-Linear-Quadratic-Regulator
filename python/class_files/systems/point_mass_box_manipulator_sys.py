@@ -24,6 +24,7 @@ class MyPointMassBoxManipulator(System):
                  Q_f: jnp.ndarray, 
                  RN1_f: float,
                  RN2_f: float,
+                 Q_box_ball: float = 100.0,
                  # --- Physical parameters ---
                  g: float = 9.81, 
                  m_ball: float = 1.0, 
@@ -52,6 +53,7 @@ class MyPointMassBoxManipulator(System):
 
         self.box_target_state = box_target_state
         self.Q_box = Q_box
+        self.Q_box_ball = Q_box_ball
         self.R = R
         self.RN1 = RN1
         self.RN2 = RN2
@@ -110,7 +112,7 @@ class MyPointMassBoxManipulator(System):
         x_box = x[jnp.array([4, 5, 10, 11])]
         err_box = x_box - self.box_target_state
         g_N = self._gap_function(q) # Pass q to gap function
-        l = u.T @ self.R @ u + self.RN1*g_N[0]**2 + self.RN2*g_N[1]**2 + err_box.T @ self.Q_box @ err_box
+        l = u.T @ self.R @ u + self.RN1*g_N[0]**2 + self.RN2*g_N[1]**2 + err_box.T @ self.Q_box @ err_box + self.Q_box_ball*((q[1]-q[5])**2 + (q[3]-q[5])**2)
         return l
     
     def _l_f_fcn(self, x):

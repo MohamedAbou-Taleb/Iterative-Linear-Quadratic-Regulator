@@ -17,8 +17,8 @@ def main():
     
     dt = 0.01
     # --- MPC Horizon Settings ---
-    # T_horizon = 1 # Time horizon for each MPC solve
-    T_horizon = 2  # Time horizon for each MPC solve
+    T_horizon = 1.0 # Time horizon for each MPC solve
+    # T_horizon = 2  # Time horizon for each MPC solve
     tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
     N_horizon = len(tspan_horizon) - 1
     
@@ -30,21 +30,23 @@ def main():
     box_width = 0.5
     box_height = 0.3
     ball_radius = 0.05
-    x_box_target = jnp.array([0.0, 1*box_height/2, 0.0, 0.0])
+    x_box_target = jnp.array([0.0, 3*box_height/2, 0.0, 0.0])
     
-    R = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
-    Q_box = jnp.diag(jnp.array([100.0, 10.0, 0.0, 0.0]))
-    Q_f = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))
-    RN1 = 50; RN2 = 5; RN1_f = 0.0; RN2_f = 0.0
+    R = jnp.diag(jnp.array([1.0, 100.0, 1.0, 100.0]))*1e-1
+    Q_box = jnp.diag(jnp.array([100.0, 1000.0, 0.0, 0.0]))
+    Q_f = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))*100
+    RN1 = 50; RN2 = 50; RN1_f = 0.0; RN2_f = 0.0
     m_box = 0.5
     m_ball = 1
 
     
     # --- Initial State ---
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
-    q_box_x_0 = +0.5
-    q_0 = jnp.array([-(box_width/2 + ball_radius) + q_box_x_0 - 0.2, 0.1,
-                      box_width/2 + ball_radius+ q_box_x_0 + 0.5, 0.1,
+    q_box_x_0 = 0.4
+    ball_1_to_box_distance = 0.5
+    ball_2_to_box_distance = 0.3
+    q_0 = jnp.array([-(box_width/2 + ball_radius) + q_box_x_0 - ball_1_to_box_distance, 0.1,
+                      box_width/2 + ball_radius+ q_box_x_0 + ball_2_to_box_distance, 0.1,
                         q_box_x_0, box_height/2])
     v_0 = jnp.zeros(6,)
     x_0 = jnp.hstack([q_0, v_0])
@@ -55,15 +57,17 @@ def main():
     tol = 1e-5
     maxiter = 50 # Low maxiter for MPC speed
     
-    U_init = jnp.zeros((n_u, N_horizon))
+    # U_init = jnp.zeros((n_u, N_horizon))
+    key = jax.random.key(1)
+    U_init = jax.random.uniform(key, shape=(n_u, N_horizon))*100
     # U_init= jnp.vstack([10*jnp.ones((1, N)), jnp.zeros((3, N))])
     
     print(f"Initial State: {x_0}")
     # Solver settings
     tol = 1e-5
     maxiter = 700 # More iterations for the harder problem
-    mu_ball = 0.1
-    mu_ball_real = 0.1
+    mu_ball = 0.5
+    mu_ball_real = 0.5
     mu_floor = 0.1
     mu_floor_real = 0.1
     reg_friction = jnp.array([1e-2, 1e-2, 1e-2])*1e-4
@@ -89,7 +93,7 @@ def main():
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='elastic_contact_euler',
+                                            integrator='contact_euler',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
@@ -254,7 +258,7 @@ def main():
     # Create time array for controls (length N)
     t_u = t_plot[:U_plot.shape[0]]
     
-    fig_u, axes_u = plt.subplots(2, 2, figsize=(12, 8), sharex=True)
+    fig_u, axes_u = plt.subplots(2, 2, figsize=(8, 5), sharex=True)
     fig_u.suptitle(f"Control Inputs (Forces) over Time", fontsize=16)
     
     # Ball 1 Controls (u0, u1)
@@ -286,7 +290,7 @@ def main():
     plt.show()
 
     anim = AnimationPointMassBox(manipulator, X_sim, tspan_sim, dt)
-    anim.animate(fullscreen=True, save_video=False, filename='box_manipulation.mp4')
+    anim.animate(fullscreen=True, save_video=False, filename='box_transport.mp4')
 
 
 if __name__ == "__main__":

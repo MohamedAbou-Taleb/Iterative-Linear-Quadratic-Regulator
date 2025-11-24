@@ -126,7 +126,7 @@ class AnimationPointMassBox:
         
         mapper_floor = vtk.vtkPolyDataMapper(); mapper_floor.SetInputConnection(tf_filter_floor.GetOutputPort())
         actor_floor = vtk.vtkActor(); actor_floor.SetMapper(mapper_floor)
-        actor_floor.GetProperty().SetColor([0,0,0])  
+        actor_floor.GetProperty().SetColor([0.8,0.8,0.8])  
 
         # 5. Text
         self.text_actor = vtk.vtkTextActor()
@@ -157,8 +157,8 @@ class AnimationPointMassBox:
         
         # Initial camera setup
         camera = self.renderer.GetActiveCamera()
-        camera.SetPosition(0, 0.75, 6)
-        camera.SetFocalPoint(0, 0.5, 0)
+        camera.SetPosition(0, 1.5, 5.0)
+        camera.SetFocalPoint(0, 0.1,0.0)
 
     def set_scene_to_timestep(self, i):
         # Helper to update matrices (Only Translation for point masses/box in this model)
