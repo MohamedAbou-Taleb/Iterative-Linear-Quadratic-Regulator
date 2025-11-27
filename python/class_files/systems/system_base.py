@@ -46,7 +46,7 @@ class System(ABC):
         e_restitution: jnp.ndarray = jnp.array(
             [0.0]
         ),  # Coefficient of restitution per contact
-        smooth_epsilon: float = 1.0,
+        smooth_epsilon: float = 1e-4,
         reg_friction: jnp.ndarray = None,
     ):  # Smoothing parameter for gradients
 
