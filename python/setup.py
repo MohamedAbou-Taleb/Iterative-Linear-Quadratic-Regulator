@@ -6,9 +6,9 @@ It's the modern, robust way to manage dependencies and package your project.
 """
 
 setup(
-    name='iLQR',
+    name='class_files',
     version='0.1.0',
-    packages=find_packages(),
+    packages=['class_files'],
     
     # Core dependencies required for your project to run
     install_requires=[
@@ -19,6 +19,7 @@ setup(
         'vtk',
         'opencv-python',
         'jaxopt',
+        'sympy',
         # e.g., 'pandas', 'numpy'
     ],
     
