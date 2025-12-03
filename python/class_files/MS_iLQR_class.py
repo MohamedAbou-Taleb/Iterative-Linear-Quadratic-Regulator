@@ -111,7 +111,7 @@ class MultipleShootingiLQR:
 
         # 4. Solve for Gains
         # Regularization can be added to Q_uu here if needed for stability
-        Q_uu += jnp.eye(self.n_u)*1e-4
+        # Q_uu += jnp.eye(self.n_u)*1e-4
         K_k = -jnp.linalg.solve(Q_uu, Q_ux)
         u_ff_k = -jnp.linalg.solve(Q_uu, Q_u)
 
