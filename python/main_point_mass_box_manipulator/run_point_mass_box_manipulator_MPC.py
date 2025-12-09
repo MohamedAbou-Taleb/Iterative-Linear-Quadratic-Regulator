@@ -15,9 +15,12 @@ def main():
     # =========================================================================
     print("Setting up MPC parameters for double pendulum...")
     
-    dt = 0.01
+    dt = 0.0025
+    # dt = 0.001
     # --- MPC Horizon Settings ---
-    T_horizon = 1.0 # Time horizon for each MPC solve
+    # T_horizon = 1.0 # Time horizon for each MPC solve
+    # T_horizon = 0.1
+    T_horizon = dt
     # T_horizon = 2  # Time horizon for each MPC solve
     tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
     N_horizon = len(tspan_horizon) - 1
@@ -32,7 +35,8 @@ def main():
     ball_radius = 0.05
     x_box_target = jnp.array([0.0, 3*box_height/2, 0.0, 0.0])
     
-    R = jnp.diag(jnp.array([1.0, 100.0, 1.0, 100.0]))*1e-1
+    # R = jnp.diag(jnp.array([1.0, 100.0, 1.0, 100.0]))*1e-1
+    R = jnp.diag(jnp.array([1.0*1e-2, 1.0*1e-3, 1.0*1e-2, 1.0*1e-3]))
     Q_box = jnp.diag(jnp.array([100.0, 1000.0, 0.0, 0.0]))
     Q_f = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0]))*100
     RN1 = 50; RN2 = 50; RN1_f = 0.0; RN2_f = 0.0
@@ -146,6 +150,8 @@ def main():
     
     # U_guess will be the "warm start" for the next iteration
     U_guess = U_init
+    uk = jnp.zeros(manipulator_sim.n_u)
+    U_bar = jnp.zeros([manipulator_sim.n_u, N_horizon])
     
     start_time_mpc = time.time()
     
@@ -157,10 +163,17 @@ def main():
         ilqr_solver.U = U_guess
         
         # 3. Solve the optimization problem
-        X_bar, U_bar, cost = ilqr_solver.optimize_trajectory()
+        g_N = manipulator_sim._gap_function(current_x[:manipulator_sim.n_q])
+        if g_N[0] <= 0.0 and g_N[1] <= 0.0:
+            X_bar, U_bar, cost = ilqr_solver.optimize_trajectory()
+            uk = U_bar[:, 0]
+            
+        # else:
+        #     U_bar = jnp.zeros([manipulator_sim.n_u, N_horizon])
+        
         
         # 4. Get the first control input
-        uk = U_bar[:, 0]
+        
         # uk = jnp.array([0.0, 0.0])  # No control for testing
         
         # 5. Simulate the "real" system one step forward
