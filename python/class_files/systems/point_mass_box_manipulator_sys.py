@@ -88,10 +88,28 @@ class MyPointMassBoxManipulator(System):
 
     def _generalized_forces(self, q, v, u):
         f_g = jnp.array([0.0, 0.0, 0.0, 0.0, 0.0, -self.m_box * self.g])
+        u_PD = self._PD_controller(q, v)
+        u += u_PD
         f_tau = jnp.eye(6, 4) @ u
         h = f_g + f_tau
         return h
 
+    def _PD_controller(self, q, v):
+        K_p = jnp.diag(jnp.array([10.0, 2.0]))*5
+        K_d = jnp.diag(jnp.array([10.0, 100.0]))
+        # I_r_Oball_ref = q[4:6] + jnp.array([0.0, 1.0])
+        I_r_Oball_ref = q[4:6] + self.box_target_state[0:2]
+        I_r_Oball_1 = q[0:2]
+        I_r_Oball_2 = q[2:4]
+        I_v_ball_1 = v[0:2]
+        I_v_ball_2 = v[2:4]
+        err1 = I_r_Oball_ref - I_r_Oball_1
+        err2 = I_r_Oball_ref - I_r_Oball_2
+        derr1 = -I_v_ball_1
+        derr2 = -I_v_ball_2
+        u_PD = jnp.hstack([K_p @ err1 + K_d @ derr1, K_p @ err2 + K_d @ derr2]) + jnp.array([5.0, 0.0, -5.0, 0.0])
+        return u_PD
+    
     def _contact_jacobian(self, q):
         w_T1 = jnp.array([0.0, -1.0, 0.0, 0.0, 0.0, 1.0])
         w_N1 = jnp.array([-1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
@@ -124,8 +142,11 @@ class MyPointMassBoxManipulator(System):
         x_box = x[jnp.array([4, 5, 10, 11])]
         err_box = x_box - self.box_target_state
         g_N = self._gap_function(q)  # Pass q to gap function
+        u_ref = jnp.array([5.0, 0.0, -5.0, 0.0])
+        du = u-u_ref
         l = (
-            u.T @ self.R @ u
+            # u.T @ self.R @ u
+            du.T @ self.R @ du
             + self.RN1 * g_N[0] ** 2
             + self.RN2 * g_N[1] ** 2
             + err_box.T @ self.Q_box @ err_box

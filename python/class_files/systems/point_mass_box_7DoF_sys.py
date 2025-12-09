@@ -79,9 +79,31 @@ class MyPointMassBoxManipulator7DoF(System):
     
     def _generalized_forces(self, q, v, u):
         f_g = get_gen_force(q, v, self.box_width, self.box_height, self.m_box, self.m_ball, self.ball_radius, self.theta_box, self.g)
+        
+        
+        u_PD = self._PD_controller(q, v)
+        u += u_PD
+
         f_tau = jnp.eye(7,4) @ u
+
         h = f_g + f_tau
         return h
+    
+    def _PD_controller(self, q, v):
+        K_p = jnp.diag(jnp.array([10.0, 2.0]))*5
+        K_d = jnp.diag(jnp.array([10.0, 100.0]))
+        # I_r_Oball_ref = q[4:6] + jnp.array([0.0, 1.0])
+        I_r_Oball_ref = q[4:6] + self.box_target_state[0:2]
+        I_r_Oball_1 = q[0:2]
+        I_r_Oball_2 = q[2:4]
+        I_v_ball_1 = v[0:2]
+        I_v_ball_2 = v[2:4]
+        err1 = I_r_Oball_ref - I_r_Oball_1
+        err2 = I_r_Oball_ref - I_r_Oball_2
+        derr1 = -I_v_ball_1
+        derr2 = -I_v_ball_2
+        u_PD = jnp.hstack([K_p @ err1 + K_d @ derr1, K_p @ err2 + K_d @ derr2]) + jnp.array([5.0, 0.0, -5.0, 0.0])
+        return u_PD
     
     def _contact_jacobian(self, q):
         W = get_W(q, jnp.zeros(self.n_v), self.box_width, self.box_height, self.m_box, self.m_ball, self.ball_radius, self.theta_box, self.g)
@@ -110,7 +132,25 @@ class MyPointMassBoxManipulator7DoF(System):
         dx_B = g_N[0:2]
         dy_B = jnp.array([B_r_P1ball1[1], B_r_P2ball2[1]])
         RN = jnp.diag(jnp.array([self.RN1, self.RN2]))
-        l = u.T @ self.R @ u + dx_B.T @ RN @ dx_B + self.Q_box_ball*dy_B.T@dy_B + err_box.T @ self.Q_box @ err_box + self.Q_vel*v.T@v
+        # u_ref = jnp.array([5.0, 0.0, -5.0, 0.0])
+        # du = u-u_ref
+        # K_p = jnp.diag(jnp.array([10.0, 2.0]))*2
+        # K_d = jnp.diag(jnp.array([10.0, 100.0]))    
+        # I_r_Oball_ref = x[4:6] + jnp.array([0.0, 1.0])
+        # I_r_Oball_1 = x[0:2]
+        # I_r_Oball_2 = x[2:4]
+        # I_v_ball_1 = x[7:9]
+        # I_v_ball_2 = x[9:11]
+        # err1 = I_r_Oball_ref - I_r_Oball_1
+        # err2 = I_r_Oball_ref - I_r_Oball_2
+        # derr1 = -I_v_ball_1
+        # derr2 = -I_v_ball_2
+        # u_ref = jnp.hstack([K_p @ err1 + K_d @ derr1, K_p @ err2 + K_d @ derr2]) + jnp.array([5.0, 0.0, -5.0, 0.0])
+        # du = u_ref - u
+
+        du = u
+        l = du.T @ self.R @ du + dx_B.T @ RN @ dx_B + self.Q_box_ball*dy_B.T@dy_B + err_box.T @ self.Q_box @ err_box + self.Q_vel*v.T@v
+        # l = u.T @ self.R @ u + dx_B.T @ RN @ dx_B + self.Q_box_ball*dy_B.T@dy_B + err_box.T @ self.Q_box @ err_box + self.Q_vel*v.T@v
         return l
     
     def _l_f_fcn(self, x):
@@ -124,7 +164,7 @@ class MyPointMassBoxManipulator7DoF(System):
 
 if __name__ == "__main__":
     # --- Parameters ---
-    dt = 0.01
+    dt = 0.001
     box_width = 0.5
     box_height = 0.3
     ball_radius = 0.05
@@ -161,7 +201,7 @@ if __name__ == "__main__":
     # q = [x_b1, y_b1, x_b2, y_b2, x_box, y_box]
     q_0 = jnp.array([-(box_width/2 + ball_radius) -0.4, 0.1,
                       box_width/2 + ball_radius + 0.4, 0.1, 
-                      0.0, 4*box_height/2, jnp.pi/4*0.1]) # Box starts high (0.5)
+                      0.0, 1*box_height/2, jnp.pi/4*0.0]) # Box starts high (0.5)
     v_0 = jnp.zeros(7,)
     x_0 = jnp.hstack([q_0, v_0])
     
@@ -181,12 +221,26 @@ if __name__ == "__main__":
     x_curr = x_0
     u_zero = jnp.zeros(4,) # No actuation on balls
     # u_zero = jnp.array([100.0, 0.2, -100.0, 0.2])
+    K_p = jnp.diag(jnp.array([10.0, 2.0]))*2
+    K_d = jnp.diag(jnp.array([10.0, 100.0]))
     start_time = time.time()
     for _ in range(N_sim):
-        x_curr = manipulator.f_fcn(x_curr, u_zero)
+        I_r_Oball_ref = x_curr[4:6] + jnp.array([0.0, 1.0])
+        I_r_Oball_1 = x_curr[0:2]
+        I_r_Oball_2 = x_curr[2:4]
+        I_v_ball_1 = x_curr[7:9]
+        I_v_ball_2 = x_curr[9:11]
+        err1 = I_r_Oball_ref - I_r_Oball_1
+        err2 = I_r_Oball_ref - I_r_Oball_2
+        derr1 = -I_v_ball_1
+        derr2 = -I_v_ball_2
+        u = jnp.hstack([K_p @ err1 + K_d @ derr1, K_p @ err2 + K_d @ derr2]) + jnp.array([5.0, 0.0, -5.0, 0.0])
+        x_curr = manipulator.f_fcn(x_curr, u)
         X_hist.append(x_curr)
         gN_curr = manipulator._gap_function(x_curr[:manipulator.n_q])
         gN_hist.append(gN_curr)
+        
+
     print(f"Simulation finished in {time.time() - start_time:.4f}s")
     
     X_hist = np.array(X_hist)
