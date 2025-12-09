@@ -139,8 +139,10 @@ class MyPointMassBoxManipulatorSmooth(System):
         x_box = x[jnp.array([4, 5, 10, 11])]
         err_box = x_box - self.box_target_state
         g_N = self._gap_function(q)  # Pass q to gap function
+        u_ref = jnp.array([5.0, 0.0, -5.0, 0.0])
+        du = u-u_ref
         l = (
-            u.T @ self.R @ u
+            du.T @ self.R @ du
             + self.RN1 * g_N[0] ** 2
             + self.RN2 * g_N[1] ** 2
             + err_box.T @ self.Q_box @ err_box
@@ -172,9 +174,10 @@ class MyPointMassBoxManipulatorSmooth(System):
     
     # @jit
     def smooth_normal_force(self, g_N, gamma_N, sigma, k):
-        c = self.smooth_compliance(g_N, sigma, k)
-        d = self.dissipation(gamma_N)
-        lam_N = c*d
+        # c = self.smooth_compliance(g_N, sigma, k)
+        # d = self.dissipation(gamma_N)
+        # lam_N = c*d
+        lam_N = jnp.abs((1e-3/(g_N + 1e-2)))
         return lam_N
 
     # @jit
@@ -232,7 +235,7 @@ if __name__ == "__main__":
         Q_f=Q_f,
         RN1_f=RN1_f,
         RN2_f=RN2_f,
-        integrator="contact_euler",
+        integrator="moreau",
         box_height=box_height,
         box_width=box_width,
         ball_radius=ball_radius,
@@ -277,7 +280,7 @@ if __name__ == "__main__":
     u_zero = jnp.zeros(
         4,
     )  # No actuation on balls
-    u_zero = jnp.array([0.0, 0.2, -10.0, 0.2])
+    u_zero = jnp.array([0.0, 0.2, -10.0, 0.2])*0
     start_time = time.time()
     for _ in range(N_sim):
         x_curr = manipulator.f_fcn(x_curr, u_zero)
