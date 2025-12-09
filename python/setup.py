@@ -20,6 +20,7 @@ setup(
         'opencv-python',
         'jaxopt',
         'sympy',
+        'casadi',
         # e.g., 'pandas', 'numpy'
     ],
     
