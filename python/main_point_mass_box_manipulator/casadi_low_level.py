@@ -6,8 +6,8 @@ class CasadiLowLevelController:
         """
         Initializes the CasADi optimizer.
         """
-        self.opti = ca.Opti('conic') # Use the Opti stack for easy constraint definition
-
+        # self.opti = ca.Opti('conic') # Use the Opti stack for easy constraint definition
+        self.opti = ca.Opti() # Use the Opti stack for easy constraint definition
         # --- 1. Decision Variables ---
         # Acceleration (6), Torque (4), Contact Forces (4)
         self.ddq = self.opti.variable(6)
@@ -47,9 +47,9 @@ class CasadiLowLevelController:
         # Build Objective
         J = 0.5 * (
             ca.mtimes([d_u_box.T, R_force_np, d_u_box]) +
-            ca.mtimes([d_ddq_box.T, Q_acc_np, d_ddq_box]) +
-            ca.mtimes([self.tau.T, R_tau_np, self.tau]) +
-            epsilon * ca.mtimes(self.lam.T, self.lam)
+            ca.mtimes([d_ddq_box.T, Q_acc_np, d_ddq_box]) 
+            # ca.mtimes([self.tau.T, R_tau_np, self.tau]) +
+            # epsilon * ca.mtimes(self.lam.T, self.lam)
         )
         self.opti.minimize(J)
 
@@ -61,22 +61,23 @@ class CasadiLowLevelController:
         # --- 5. Inequality Constraints (The main benefit of CasADi) ---
         
         # Example A: Torque limits
-        # tau_limit = 5.0
-        # self.opti.subject_to(self.tau <= tau_limit)
-        # self.opti.subject_to(self.tau >= -tau_limit)
+        tau_limit = 10.0
+        self.opti.subject_to(self.tau <= tau_limit)
+        self.opti.subject_to(self.tau >= -tau_limit)
 
         # Example B: Unilateral contact (Forces can only push)
         # self.opti.subject_to(self.lam >= 0) 
+
         self.opti.subject_to(self.lam[1] >= 0)  # Normal force at contact 1
         self.opti.subject_to(self.lam[3] >= 0)  # Normal force at contact 2
+
         # Example C: Friction Cone (Simplified for 2D)
         # assuming lam indices are [n1, t1, n2, t2] or similar. 
-        # mu = 0.3
 
-        self.opti.subject_to(self.lam[1] <= manipulator.mu[0] * self.lam[0])
-        self.opti.subject_to(self.lam[1] >= -manipulator.mu[0] * self.lam[0])
-        self.opti.subject_to(self.lam[3] <= manipulator.mu[1] * self.lam[2])
-        self.opti.subject_to(self.lam[3] >= -manipulator.mu[1] * self.lam[2])
+        self.opti.subject_to(-manipulator.mu[0] * self.lam[1] <= self.lam[0])
+        self.opti.subject_to(manipulator.mu[0] * self.lam[1] >= self.lam[0])
+        self.opti.subject_to(-manipulator.mu[1] *self.lam[3] <=  self.lam[2])
+        self.opti.subject_to(manipulator.mu[1] * self.lam[3] >= self.lam[2])
 
         # --- 6. Solver Settings ---
         # 'ipopt' is a robust NLP solver. 'qpoases' is faster for strict QPs.
@@ -103,6 +104,8 @@ class CasadiLowLevelController:
 
         try:
             sol = self.opti.solve()
+            # print objective value
+            print("Optimal cost:", sol.value(self.opti.f))
             return sol.value(self.ddq), sol.value(self.tau), sol.value(self.lam)
         except RuntimeError:
             # Handle infeasibility (return zeros or last valid control)

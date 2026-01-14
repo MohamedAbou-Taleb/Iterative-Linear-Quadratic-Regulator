@@ -95,10 +95,15 @@ class MyPointMassBoxManipulator(System):
         return h
 
     def _PD_controller(self, q, v):
-        K_p = jnp.diag(jnp.array([10.0, 2.0]))*5
-        K_d = jnp.diag(jnp.array([10.0, 100.0]))
+        # K_p = jnp.diag(jnp.array([10.0, 2.0]))*5
+        # K_d = jnp.diag(jnp.array([10.0, 100.0]))
+        
+        K_p = jnp.diag(jnp.array([1.0, 1.0]))
+        K_d = jnp.diag(jnp.array([1.0, 10.0]))
+
         # I_r_Oball_ref = q[4:6] + jnp.array([0.0, 1.0])
-        I_r_Oball_ref = q[4:6] + self.box_target_state[0:2]
+        # I_r_Oball_ref = q[4:6] + self.box_target_state[0:2]
+        I_r_Oball_ref = q[4:6]
         I_r_Oball_1 = q[0:2]
         I_r_Oball_2 = q[2:4]
         I_v_ball_1 = v[0:2]
