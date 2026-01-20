@@ -163,13 +163,14 @@ class MySurfaceBoxManipulator(System):
         # EE1 (Left)
         des_x1 = q[6] - self.w_box/2 - self.w_EE/2 *0.99 # Slightly to the left
         des_y1 = q[7]
-        des_phi1 = 0.0
+        # des_phi1 = 0.0
+        des_phi1 = q[8]
         
         # EE2 (Right)
         des_x2 = q[6] + self.w_box/2 + self.w_EE/2 *0.99 # Slightly to the right
         des_y2 = q[7]
-        des_phi2 = 0.0
-
+        # des_phi2 = 0.0
+        des_phi2 = q[8]
         # Errors (EE1)
         e_1 = jnp.array([des_x1, des_y1, des_phi1]) - q[0:3]
         de_1 = -v[0:3]
