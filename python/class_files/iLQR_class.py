@@ -2,7 +2,7 @@ import jax
 import jax.numpy as jnp
 from jax import lax
 from typing import List, Tuple, Callable
-import numpy as np  # Used for type hinting
+import numpy as np
 
 # Import the base class
 from .systems.system_base import System
@@ -11,9 +11,6 @@ from .systems.system_base import System
 class iLQR:
     """
     Python/JAX implementation of the iLQR algorithm.
-
-    This version uses jax.lax.scan to compile the entire
-    backward and forward passes, eliminating Python loop overhead.
     """
 
     def __init__(
@@ -27,7 +24,8 @@ class iLQR:
         alpha_factor: float = 0.5,
         min_alpha: float = 1e-8,
         verbose: bool = True,
-    ):  # <-- Added verbose flag
+        ctrl_dt: float = None,  # <--- NEW ARGUMENT
+    ):
 
         self.system = system
         self.T = T
@@ -38,14 +36,36 @@ class iLQR:
         self.maxiter = maxiter
         self.alpha_factor = alpha_factor
         self.min_alpha = min_alpha
-        self.verbose = verbose  # <-- Store verbose flag
+        self.verbose = verbose
 
         # Get dims from system
         self.n_x = system.n_x
         self.n_u = system.n_u
-        self.dt = system.dt
 
-        # Time horizon
+        # --- NEW LOGIC FOR TIME STEPPING ---
+        # self.sim_dt is the integration step size (fixed by system)
+        self.sim_dt = system.dt
+        
+        # self.dt is now the CONTROL step size
+        if ctrl_dt is None:
+            self.dt = self.sim_dt
+            self.sim_steps = 1
+        else:
+            self.dt = ctrl_dt
+            # Calculate integer number of integration steps per control step
+            # Using round to avoid floating point errors (e.g., 0.01 / 0.001 = 9.9999)
+            ratio = self.dt / self.sim_dt
+            self.sim_steps = int(round(ratio))
+            
+            # Sanity check to ensure time steps align
+            if abs(ratio - self.sim_steps) > 1e-6:
+                raise ValueError(
+                    f"Control dt ({self.dt}) must be an integer multiple "
+                    f"of system simulation dt ({self.sim_dt})"
+                )
+        # -----------------------------------
+
+        # Time horizon (Control grid)
         self.tspan = jnp.arange(0, T + self.dt, self.dt)
         self.N = len(self.tspan) - 1
 
@@ -56,43 +76,39 @@ class iLQR:
                 f"U_init must have shape {expected_shape}, but got {U_init.shape}"
             )
 
-        # Trajectories (using (dim, time) convention)
+        # Trajectories
         self.X = jnp.zeros((self.n_x, self.N + 1))
         self.U = jnp.asarray(U_init)
 
-        # Gains (N, n_u, n_x)
+        # Gains
         self.K = jnp.zeros((self.N, self.n_u, self.n_x))
-        # Feedforward (n_u, N)
         self.U_ff = jnp.zeros((self.n_u, self.N))
 
         # =====================================================================
         # --- PERFORMANCE OPTIMIZATION ---
-        # JIT-compile the full scan-based passes.
-
-        # 1. JIT-compiled function for the entire backward pass
         self.backward_pass = jax.jit(self._backward_pass_scan)
-
-        # 2. JIT-compiled function for the entire forward pass
-        #    x_0 is now a static argument, so JAX will re-compile
-        #    if its *shape* changes, but it will use the new *value*
-        #    on every call, which is what we need for MPC.
-        #    We must pass x_0 in as an arg to avoid the "stale x_0" bug.
         self.forward_pass = jax.jit(self._forward_pass_scan)
         # =====================================================================
 
+    def _integrate_dynamics(self, x: jnp.ndarray, u: jnp.ndarray) -> jnp.ndarray:
+        """
+        Integrates the system dynamics for one CONTROL step.
+        If sim_steps > 1, this loops the system dynamics sim_steps times.
+        """
+        
+        # Define the loop body: x_{i+1} = f(x_i, u)
+        # u is constant across the sub-steps (Zero-Order Hold)
+        def body(i, val):
+            return self.system.f_fcn(val, u)
+
+        # Run the loop
+        # If sim_steps == 1, this executes exactly once (same as before)
+        # But for JAX efficiency, we use fori_loop
+        x_next = lax.fori_loop(0, self.sim_steps, body, x)
+        
+        return x_next
+
     def _backward_pass_body(self, carry: Tuple, inputs: Tuple):
-        """
-        The body function for the backward pass scan.
-        Calculates gains for a single time step.
-
-        Args:
-            carry: (V_x, V_xx) from the *next* time step (k+1).
-            inputs: (x_k, u_k) from the nominal trajectory.
-
-        Returns:
-            New carry: (V_x_prev, V_xx_prev) for time step k.
-            Per-step outputs: (u_ff_k, K_k)
-        """
         V_x, V_xx = carry
         x, u = inputs
 
@@ -108,8 +124,8 @@ class iLQR:
         Q_ux = l_ux + f_u.T @ V_xx @ f_x
         Q_uu = l_uu + f_u.T @ V_xx @ f_u
 
-        # --- 3. Solve for Gains (u_opt_fcn logic) ---
-        # Note: Using solve is more stable than inv
+        # --- 3. Solve for Gains ---
+        # Regularization can be added to Q_uu here if needed
         K_k = -jnp.linalg.solve(Q_uu, Q_ux)
         u_ff_k = -jnp.linalg.solve(Q_uu, Q_u)
 
@@ -123,59 +139,24 @@ class iLQR:
         return new_carry, outputs
 
     def _backward_pass_scan(self, X_nom: jnp.ndarray, U_nom: jnp.ndarray):
-        """
-        Performs a full backward pass using jax.lax.scan.
-        This function is JIT-compiled.
-
-        Args:
-            X_nom: Nominal state trajectory, (n_x, N+1)
-            U_nom: Nominal control trajectory, (n_u, N)
-
-        Returns:
-            U_ff: New feedforward gains, (n_u, N)
-            K: New feedback gains, (N, n_u, n_x)
-        """
-        # Get terminal cost derivatives
         x_N = X_nom[:, -1]
         V_x = self.system.l_f_x_fcn(x_N)
         V_xx = self.system.l_f_xx_fcn(x_N)
 
         init_carry = (V_x, V_xx)
-
-        # Prepare inputs for scanning: (x_k, u_k)
-        # We need to scan over (X[:, :-1], U) in reverse
-        # Transpose from (dim, time) to (time, dim) for scanning
         xs = (X_nom[:, :-1].T, U_nom.T)
 
-        # Run the scan
-        # 'reverse=True' makes it loop from N-1 down to 0
         final_carry, outputs = lax.scan(
             self._backward_pass_body, init_carry, xs, reverse=True
         )
 
-        # Unpack outputs
         u_ff_stack, K_stack = outputs
-
-        # Transpose U_ff from (N, n_u) back to (n_u, N)
         U_ff = u_ff_stack.T
-        # K is already in (N, n_u, n_x) format, which is what we want
         K = K_stack
 
         return U_ff, K
 
     def _forward_pass_body(self, carry: Tuple, inputs: Tuple):
-        """
-        The body function for the forward pass scan.
-        Simulates one time step.
-
-        Args:
-            carry: (x_k, cost_k)
-            inputs: (xk_old, uk_old, uk_ff, K_k, alpha)
-
-        Returns:
-            New carry: (x_k+1, cost_k+1)
-            Per-step outputs: (x_k, u_k)
-        """
         xk_new, cost_new = carry
         xk_old, uk_old, uk_ff, K_k, alpha = inputs
 
@@ -187,73 +168,41 @@ class iLQR:
         xkPlusOne, cost_k = self._get_all_calcs_for_forward_pass(xk_new, uk_new)
 
         new_carry = (xkPlusOne, cost_new + cost_k)
-        outputs = (xk_new, uk_new)  # Store the state/control *used* at this step
+        outputs = (xk_new, uk_new)
 
         return new_carry, outputs
 
     def _forward_pass_scan(
         self,
-        x_0_arg: jnp.ndarray,  # <-- Pass x_0 as an argument
+        x_0_arg: jnp.ndarray,
         alpha: float,
         X_old: jnp.ndarray,
         U_old: jnp.ndarray,
         U_ff: jnp.ndarray,
         K: jnp.ndarray,
     ):
-        """
-        Performs a full forward pass (rollout) using jax.lax.scan.
-        This function is JIT-compiled.
-
-        Args:
-            x_0_arg: Initial state (as an argument, not from self).
-            alpha: Line search parameter.
-            X_old: Previous state trajectory, (n_x, N+1)
-            U_old: Previous control trajectory, (n_u, N)
-            U_ff: Feedforward gains, (n_u, N)
-            K: Feedback gains, (N, n_u, n_x)
-
-        Returns:
-            (X_new, U_new, cost_new)
-        """
-        # Initial carry uses the passed-in x_0_arg
-        init_carry = (x_0_arg, 0.0)  # (x_0, cost=0.0)
-
-        # Prepare inputs for scanning
-        # We need (xk_old, uk_old, uk_ff, K_k, alpha)
-        # Transpose to (time, dim)
+        init_carry = (x_0_arg, 0.0)
+        
         xk_old_T = X_old[:, :-1].T
         uk_old_T = U_old.T
         uk_ff_T = U_ff.T
-        # K is already (N, n_u, n_x)
-        # alpha needs to be broadcast to length N
         alpha_T = jnp.repeat(alpha, self.N)
 
         xs = (xk_old_T, uk_old_T, uk_ff_T, K, alpha_T)
 
-        # Run the scan
         final_carry, outputs = lax.scan(self._forward_pass_body, init_carry, xs)
 
-        # Unpack outputs
         final_x, final_cost = final_carry
         X_stack, U_stack = outputs
 
-        # Add terminal state to X
-        # X_stack is (N, n_x), U_stack is (N, n_u)
         X_new = jnp.vstack([X_stack, final_x[jnp.newaxis, :]]).T
         U_new = U_stack.T
-
-        # Add terminal cost
         cost_new = final_cost + self.system.l_f_fcn(final_x)
 
         return X_new, U_new, cost_new
 
     def optimize_trajectory(self):
-        """
-        Runs the full iLQR optimization loop.
-        """
-
-        # Initial forward pass (alpha=0) to get initial trajectory
-        # Pass self.x_0 as an argument
+        # Initial forward pass
         self.X, self.U, cost = self.forward_pass(
             self.x_0, 0.0, self.X, self.U, self.U_ff, self.K
         )
@@ -263,7 +212,7 @@ class iLQR:
         cost_prev = cost
 
         for i in range(self.maxiter):
-            # Check for convergence
+            # Check convergence
             if i > 0 and abs(cost - cost_prev) <= self.tol:
                 if self.verbose:
                     print(f"Converged at iteration {i}")
@@ -271,22 +220,17 @@ class iLQR:
             cost_prev = cost
 
             # 1. Backward pass
-            #    This call is now JIT-compiled and runs the whole scan
             self.U_ff, self.K = self.backward_pass(self.X, self.U)
 
             # 2. Line search
             alpha = 1.0
             is_step_accepted = False
-            for j in range(10):  # Max 10 line search steps
-
-                # This call is also JIT-compiled
-                # Pass self.x_0 as an argument
+            for j in range(10):
                 X_new, U_new, cost_new = self.forward_pass(
                     self.x_0, alpha, self.X, self.U, self.U_ff, self.K
                 )
 
                 if cost_new <= cost:
-                    # Accept step
                     self.X = X_new
                     self.U = U_new
                     cost = cost_new
@@ -297,51 +241,57 @@ class iLQR:
                         )
                     break
                 else:
-                    # Reduce alpha
                     alpha *= self.alpha_factor
                     if alpha < self.min_alpha:
-                        break  # Alpha is too small
+                        break
 
             if not is_step_accepted:
                 if self.verbose:
-                    print(
-                        f"Warning: Line search failed at iteration {i+1}. Cost did not improve."
-                    )
+                    print(f"Warning: Line search failed at iteration {i+1}.")
                 break
-
-        if i == self.maxiter - 1:
-            if self.verbose:
-                print(
-                    f"Warning: Reached max iterations ({self.maxiter}) without converging."
-                )
+        
+        if i == self.maxiter - 1 and self.verbose:
+            print(f"Warning: Reached max iterations ({self.maxiter}).")
 
         return self.X, self.U, cost
 
-    # --- These are now helper functions, not part of the main loop logic ---
+    # --- HELPER FUNCTIONS ---
 
     def _get_all_derivatives_for_backward_pass(
         self, x: jnp.ndarray, u: jnp.ndarray
     ) -> Tuple:
         """
-        Internal function to group all system calls for the backward pass
-        into a single JIT-compilable unit.
+        Gets derivatives. Handles Multi-Step Integration if needed.
         """
-        # This function will be inlined into the scan body
         l_x = self.system.l_x_fcn(x, u)
         l_u = self.system.l_u_fcn(x, u)
         l_xx = self.system.l_xx_fcn(x, u)
         l_ux = self.system.l_ux_fcn(x, u)
         l_uu = self.system.l_uu_fcn(x, u)
-        f_x = self.system.f_x_fcn(x, u)
-        f_u = self.system.f_u_fcn(x, u)
+
+        # --- DYNAMICS DERIVATIVES ---
+        if self.sim_steps == 1:
+            # OPTIMIZATION: If steps=1, use the system's provided methods directly.
+            # This is faster if the system has analytical derivatives.
+            f_x = self.system.f_x_fcn(x, u)
+            f_u = self.system.f_u_fcn(x, u)
+        else:
+            # If sub-stepping is active, we must differentiate through the
+            # loop to get the correct Jacobian A and B matrices for the
+            # full control step.
+            f_x = jax.jacfwd(self._integrate_dynamics, argnums=0)(x, u)
+            f_u = jax.jacfwd(self._integrate_dynamics, argnums=1)(x, u)
+
         return l_x, l_u, l_xx, l_ux, l_uu, f_x, f_u
 
     def _get_all_calcs_for_forward_pass(self, x: jnp.ndarray, u: jnp.ndarray) -> Tuple:
         """
-        Internal function to group all system calls for the forward pass
-        into a single JIT-compilable unit.
+        Calculates next state and cost. Handles Multi-Step Integration.
         """
-        # This function will be inlined into the scan body
-        x_next = self.system.f_fcn(x, u)
+        # Call the multi-step integrator
+        x_next = self._integrate_dynamics(x, u)
+        
+        # Calculate cost (usually defined at the knot point)
         cost = self.system.l_fcn(x, u)
+        
         return x_next, cost
