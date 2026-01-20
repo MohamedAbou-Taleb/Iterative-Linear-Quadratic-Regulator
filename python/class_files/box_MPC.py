@@ -20,7 +20,8 @@ class box_MPC(System):
                  T_horizon: float = 1.0,
                  Q: jnp.ndarray = jnp.diag(jnp.array([1.0, 1.0, 1.0, 1.0])),
                  R: jnp.ndarray = jnp.diag(jnp.array([1.0, 1.0])),
-                 Q_f: jnp.ndarray = jnp.diag(jnp.array([0.0, 0.0, 0.0, 0.0]))):
+                 Q_f: jnp.ndarray = jnp.diag(jnp.array([0.0, 0.0, 0.0, 0.0])),
+                 ctrl_dt: float = None):
         self.T_horizon = T_horizon
         self.dt = point_mass_box_sys.dt
         self.Q = Q
@@ -52,7 +53,13 @@ class box_MPC(System):
         x_0 = jnp.zeros(self.n_x)
         self.tspan = jnp.arange(0, T_horizon + self.dt, self.dt)
         self.N = len(self.tspan) - 1
-        self.iLQR = iLQR(system=self, T=self.T_horizon, x_0=x_0, U_init=jnp.zeros((self.n_u, self.N)))
+        if ctrl_dt is None:
+            self.ctrl_dt = self.dt
+        else:
+            self.ctrl_dt = ctrl_dt
+        self.tspan_ctrl = jnp.arange(0, T_horizon + self.ctrl_dt, self.ctrl_dt)
+        self.N_ctrl = len(self.tspan_ctrl) - 1
+        self.iLQR = iLQR(system=self, T=self.T_horizon, x_0=x_0, U_init=jnp.zeros((self.n_u, self.N_ctrl)), ctrl_dt=self.ctrl_dt)
         self.l_fcn = jit(self._l_fcn)
         self.l_x_fcn = jit(grad(self._l_fcn, argnums=0))
         self.l_u_fcn = jit(grad(self._l_fcn, argnums=1))
@@ -129,8 +136,6 @@ class box_MPC(System):
     
     def u_box_of_lambda(self, _lambda):
         # lambda_T1, lambda_N1, lambda_T2, lambda_N2 = _lambda
-        # F_x = lambda_N1 - lambda_N2
-        # F_y = lambda_T1 + lambda_T2
         F_x = _lambda[1] - _lambda[3]
         F_y = _lambda[0] + _lambda[2]
         u_box = jnp.array([F_x, F_y])
