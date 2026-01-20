@@ -13,7 +13,8 @@ from casadi_low_level import CasadiLowLevelController
 
 dt = 0.0001
 dt = 0.001
-dt_control = 0.01*10
+# dt_control = 0.01*10
+dt_control = 0.01
 control_ratio = int(dt_control / dt)
 box_width = 0.5
 box_height = 0.3
@@ -75,14 +76,15 @@ b = jnp.hstack( [h, jnp.zeros(4)] )
 # Q_f = jnp.diag(jnp.array([100.0, 100.0, 100.0, 100.0]))
 
 Q = jnp.diag(jnp.array([10.0, 100.0, 10.0 , 100.0]))
-R = jnp.diag(jnp.array([0.1, 0.1]))*1e2
+# R = jnp.diag(jnp.array([0.1, 0.1]))*1e2
+R = jnp.diag(jnp.array([0.1, 0.1]))*1e1
 Q_f = jnp.diag(jnp.array([100.0, 100.0, 100.0, 100.0]))
 
 T_horizon = 1.0
 # T_horizon = 0.2
 
 box_MPC = box_MPC(point_mass_box_sys=manipulator, T_horizon=T_horizon,
-                    Q=Q, R=R, Q_f=Q_f)
+                    Q=Q, R=R, Q_f=Q_f, ctrl_dt=dt_control)
 
 
 Q_box_acc = jnp.diag(jnp.array([10.0, 100.0]))
@@ -177,21 +179,21 @@ manipulator_sim = MyPointMassBoxManipulator(dt=dt,
                                             box_target_state=x_box_target, 
                                             R=R, Q_box=Q_box, RN1=RN1, RN2=RN2,
                                             Q_f=Q_f, RN1_f=RN1_f, RN2_f=RN2_f,
-                                            integrator='moreau',
+                                            integrator='contact_euler',
                                             box_height=box_height,
                                             box_width=box_width,
                                             ball_radius=ball_radius,
-                                            m_box=m_box,
+                                            m_box=m_box*1,
                                             m_ball=m_ball,
                                             mu=mu) # mu=0.0 for box-floor to slide
 
-q_0 = jnp.array([- 10*manipulator.ball_radius - manipulator.box_width/2, manipulator.box_height / 2,
-                 manipulator.ball_radius + manipulator.box_width/2, manipulator.box_height / 2,
+q_0 = jnp.array([- 2.0*manipulator.ball_radius - manipulator.box_width/2, manipulator.box_height / 2,
+                 manipulator.ball_radius*3.0 + manipulator.box_width/2, manipulator.box_height / 2,
                  0.0,  manipulator.box_height / 2])
 v_0 = jnp.zeros(6)
 x_0 = jnp.hstack([q_0, v_0])
 
-T_sim = 8.0
+T_sim = 7.0
 tspan_sim = jnp.arange(0, T_sim + box_MPC.dt, box_MPC.dt)
 N_sim = len(tspan_sim) - 1
 x_current = x_0
@@ -229,7 +231,8 @@ for k in range(N_sim):
                 ddq_box_ref_val=ddqdt_box[:, 0],
                 A_val=A_np,
                 b_val=b_np
-        )
+            )
+            #
     
     # Convert to JAX arrays
     uk = jnp.array(uk_val)

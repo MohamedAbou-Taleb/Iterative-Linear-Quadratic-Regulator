@@ -108,8 +108,10 @@ class MyPointMassBoxManipulator(System):
         I_r_Oball_2 = q[2:4]
         I_v_ball_1 = v[0:2]
         I_v_ball_2 = v[2:4]
-        err1 = I_r_Oball_ref - I_r_Oball_1
-        err2 = I_r_Oball_ref - I_r_Oball_2
+        # err1 = I_r_Oball_ref - I_r_Oball_1
+        # err2 = I_r_Oball_ref - I_r_Oball_2
+        err1 = (I_r_Oball_ref + jnp.array([-self.box_width/2 - self.ball_radius, 0.0])) - I_r_Oball_1
+        err2 = (I_r_Oball_ref + jnp.array([self.box_width/2 + self.ball_radius, 0.0])) - I_r_Oball_2
         derr1 = -I_v_ball_1
         derr2 = -I_v_ball_2
         u_PD = jnp.hstack([K_p @ err1 + K_d @ derr1, K_p @ err2 + K_d @ derr2]) + jnp.array([5.0, 0.0, -5.0, 0.0])
