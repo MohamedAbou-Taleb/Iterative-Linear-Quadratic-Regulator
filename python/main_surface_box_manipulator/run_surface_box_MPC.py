@@ -30,7 +30,7 @@ h_EE = 0.3
 
 # Target: Box lifted to y=1.0, upright (phi=0)
 # State: [x, y, phi, vx, vy, vphi]
-x_box_target = jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+x_box_target = jnp.array([1.0, 1.0, 0*jnp.pi/180.0, 0.0, 0.0, 0.0])
 
 # Weights
 # u is size 6
@@ -46,7 +46,6 @@ RN_f_list = [100.0] * 6
 
 # Friction (6 contacts) - high friction for grasp, low for ground slide?
 # Order: [U1, L1, U2, L2, GL, GR]
-# mu = jnp.array([0.8, 0.8, 0.8, 0.8, 1.0, 1.0])*3
 mu = jnp.array([4.0, 4.0, 4.0, 4.0, 1.0, 1.0])
 
 # --- Instantiate System ---
@@ -58,7 +57,7 @@ manipulator = MySurfaceBoxManipulator(
     RN_list=RN_list,
     Q_f=Q_f,
     RN_f_list=RN_f_list,
-    integrator="elastic_contact_euler",
+    integrator="contact_euler",
     w_box=w_box,
     h_box=h_box,
     w_EE=w_EE,
@@ -110,7 +109,7 @@ manipulator_sim = MySurfaceBoxManipulator(
     RN_list=RN_list,
     Q_f=Q_f,
     RN_f_list=RN_f_list,
-    integrator="elastic_contact_euler",
+    integrator="contact_euler",
     w_box=w_box,
     h_box=h_box,
     w_EE=w_EE,
@@ -213,8 +212,8 @@ def run_simulation():
             # Check gap function
             g_N = manipulator_sim._gap_function(x_current[:manipulator_sim.n_q])
             
-            # if g_N[0] <= 0.0 and g_N[1] <= 0.0 and g_N[2] <= 0.0 and g_N[3] <= 0.0:
-            if g_N[0] <= 0.0 and g_N[3] <= 0.0 :
+            if g_N[0] <= 0.0 and g_N[1] <= 0.0 and g_N[2] <= 0.0 and g_N[3] <= 0.0:
+            # if g_N[0] <= 0.0 and g_N[2] <= 0.0 :
                     # 1. Solve MPC
                 _, U_box_bar, ddqdt_box, _ = box_MPC_controller.optimize_trajectory(x_0=x_box)
                 uk_box = U_box_bar[:, 0]
@@ -265,27 +264,41 @@ if __name__ == "__main__":
     # --- Plotting ---
     fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
 
-    # 1. Position
-    for i in range(6):
-        axs[0].plot(tspan, X[i, :], label=f'$q_{{{i}}}$')
-    axs[0].set_ylabel('Positions $q$ [m]')
+    # 1. Position (9 DOF)
+    # q0-q2: EE1, q3-q5: EE2, q6-q8: Box
+    labels_q = ['EE1_x', 'EE1_y', 'EE1_phi', 
+                'EE2_x', 'EE2_y', 'EE2_phi', 
+                'Box_x', 'Box_y', 'Box_phi']
+    
+    for i in range(9):
+        axs[0].plot(tspan, X[i, :], label=f'${labels_q[i]}$')
+    axs[0].set_ylabel('Positions $q$ [m] / [rad]')
     axs[0].set_title('State Trajectories')
-    axs[0].legend(loc='upper right', ncol=2)
+    # Use smaller font or fewer columns if legend is too crowded
+    axs[0].legend(loc='upper right', ncol=3, fontsize='small')
     axs[0].grid(True, alpha=0.5)
 
-    # 2. Controls
-    for i in range(4):
-        axs[1].plot(tspan[:-1], U[i, :], label=f'$u_{{{i}}}$')
-    axs[1].set_ylabel('Controls $u$ [N]')
-    axs[1].legend(loc='upper right', ncol=2)
+    # 2. Controls (6 Inputs)
+    # u0-u2: EE1, u3-u5: EE2
+    labels_u = ['EE1_Fx', 'EE1_Fy', 'EE1_Tau', 
+                'EE2_Fx', 'EE2_Fy', 'EE2_Tau']
+
+    for i in range(6):
+        axs[1].plot(tspan[:-1], U[i, :], label=f'${labels_u[i]}$')
+    axs[1].set_ylabel('Controls $u$ [N] / [Nm]')
+    axs[1].legend(loc='upper right', ncol=3, fontsize='small')
     axs[1].grid(True, alpha=0.5)
 
-    # 3. Forces
-    for i in range(4):
+    # 3. Forces (12 Constraints)
+    # 0,1: Upper1 | 2,3: Lower1 | 4,5: Upper2 | 6,7: Lower2 | 8,9: GndL | 10,11: GndR
+    # Even indices = Tangential, Odd indices = Normal
+    for i in range(12):
+        # Optional: Plot only normal forces (odd indices) to reduce clutter
+        # if i % 2 != 0: 
         axs[2].plot(tspan[:-1], Lambdas[i, :], label=f'$\lambda_{{{i}}}$')
     axs[2].set_ylabel('Constraint Forces $\lambda$ [N]')
     axs[2].set_xlabel('Time [s]')
-    axs[2].legend(loc='upper right', ncol=2)
+    axs[2].legend(loc='upper right', ncol=4, fontsize='x-small')
     axs[2].grid(True, alpha=0.5)
 
     plt.tight_layout()
