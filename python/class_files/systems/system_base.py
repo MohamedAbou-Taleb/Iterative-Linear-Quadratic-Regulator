@@ -201,8 +201,7 @@ class System(ABC):
 
         # Scale: dP is Impulse.
         # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
-        r = 1.0 / (self.dt * diag_G)
-
+        r = 0.5 * 1.0 / (self.dt * (diag_G))
         # 2. Solve Contact
         # Initial guess for impulses (dP)
         dP_guess = jnp.zeros(W_k.shape[1])
@@ -438,7 +437,7 @@ class System(ABC):
 
         # Scale: dP is Impulse.
         # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
-        r = 1.0 / (self.dt * diag_G)
+        r = 0.5 * 1.0 / (self.dt * diag_G)
 
         # 2. Solve Contact
         # Initial guess for impulses (dP)
@@ -690,7 +689,7 @@ class System(ABC):
 
         # Scale: dP is Impulse.
         # r * gap = [1/(dt/m)] * [m] = [m * m / dt] -> Mass * Velocity = Momentum/Impulse
-        r = 1.0 / (self.dt * diag_G)
+        r = 0.5 * 1.0 / (self.dt * diag_G)
 
         # 2. Solve Contact
         # Initial guess for impulses (dP)
