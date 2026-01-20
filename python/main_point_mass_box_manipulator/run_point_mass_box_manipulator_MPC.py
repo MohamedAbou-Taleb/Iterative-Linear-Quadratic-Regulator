@@ -15,14 +15,15 @@ def main():
     # =========================================================================
     print("Setting up MPC parameters for double pendulum...")
     
-    dt = 0.0025
+    dt = 0.001
+    ctrl_dt = 0.01
     # dt = 0.001
     # --- MPC Horizon Settings ---
     # T_horizon = 1.0 # Time horizon for each MPC solve
     # T_horizon = 0.1
-    T_horizon = dt
+    T_horizon = 0.5
     # T_horizon = 2  # Time horizon for each MPC solve
-    tspan_horizon = jnp.arange(0, T_horizon + dt, dt)
+    tspan_horizon = jnp.arange(0, T_horizon + ctrl_dt, ctrl_dt)
     N_horizon = len(tspan_horizon) - 1
     
     # --- Simulation Settings ---
@@ -112,7 +113,8 @@ def main():
         U_init=U_init,
         tol=tol,
         maxiter=maxiter,
-        verbose=True
+        verbose=True,
+        ctrl_dt=ctrl_dt,
     )
 
     # =========================================================================
