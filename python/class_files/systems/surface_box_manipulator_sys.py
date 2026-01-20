@@ -161,25 +161,26 @@ class MySurfaceBoxManipulator(System):
         
         # Desired offsets relative to box center (approximate grasping)
         # EE1 (Left)
-        des_x1 = q[6] - self.w_box/2 - self.w_EE/2 # Slightly to the left
+        des_x1 = q[6] - self.w_box/2 - self.w_EE/2 *0.99 # Slightly to the left
         des_y1 = q[7]
         des_phi1 = 0.0
         
         # EE2 (Right)
-        des_x2 = q[6] + self.w_box/2 + self.w_EE/2 # Slightly to the right
+        des_x2 = q[6] + self.w_box/2 + self.w_EE/2 *0.99 # Slightly to the right
         des_y2 = q[7]
         des_phi2 = 0.0
 
         # Errors (EE1)
         e_1 = jnp.array([des_x1, des_y1, des_phi1]) - q[0:3]
         de_1 = -v[0:3]
-        u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1 + jnp.array([0.5, 0.0, 0.0])
 
+        # u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1 + jnp.array([0.5, 0.0, 0.0])
+        u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1
         # Errors (EE2)
         e_2 = jnp.array([des_x2, des_y2, des_phi2]) - q[3:6]
         de_2 = -v[3:6]
-        u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2 + jnp.array([-0.5, 0.0, 0.0])
-
+        # u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2 + jnp.array([-0.5, 0.0, 0.0])
+        u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2
         # Combine into generalized forces (9x1) - applied to EEs only
         u_PD = jnp.concatenate([u_1, u_2, jnp.zeros(3)])
         return u_PD

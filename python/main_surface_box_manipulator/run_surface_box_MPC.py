@@ -20,7 +20,7 @@ dt = 0.001
 dt_control = 0.01
 control_ratio = int(dt_control / dt)
 T_horizon = 1.0
-T_sim = 4.0
+T_sim = 7.0
 
 # Dimensions
 w_box = 0.5
@@ -30,7 +30,7 @@ h_EE = 0.3
 
 # Target: Box lifted to y=1.0, upright (phi=0)
 # State: [x, y, phi, vx, vy, vphi]
-x_box_target = jnp.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+x_box_target = jnp.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
 
 # Weights
 # u is size 6
@@ -46,7 +46,8 @@ RN_f_list = [100.0] * 6
 
 # Friction (6 contacts) - high friction for grasp, low for ground slide?
 # Order: [U1, L1, U2, L2, GL, GR]
-mu = jnp.array([0.8, 0.8, 0.8, 0.8, 1.0, 1.0])*3
+# mu = jnp.array([0.8, 0.8, 0.8, 0.8, 1.0, 1.0])*3
+mu = jnp.array([4.0, 4.0, 4.0, 4.0, 1.0, 1.0])
 
 # --- Instantiate System ---
 manipulator = MySurfaceBoxManipulator(
@@ -57,7 +58,7 @@ manipulator = MySurfaceBoxManipulator(
     RN_list=RN_list,
     Q_f=Q_f,
     RN_f_list=RN_f_list,
-    integrator="contact_euler",
+    integrator="elastic_contact_euler",
     w_box=w_box,
     h_box=h_box,
     w_EE=w_EE,
@@ -74,28 +75,26 @@ q_ee1 = jnp.array([-0.6, 0.25, 1*30*jnp.pi/180])
 q_ee2 = jnp.array([0.9, 0.25, 1*30*jnp.pi/180])
 # Box (Center, on ground)
 # h_box/2 is the y-center when on ground
-q_box = jnp.array([0.0, 1*h_box/2, 0.0]) 
+q_box = jnp.array([0.0, 1*h_box/2, 30*jnp.pi/180]) 
 
 q_0 = jnp.concatenate([q_ee1, q_ee2, q_box])
 v_0 = jnp.zeros(9)
 x_0 = jnp.concatenate([q_0, v_0])
 # Target: Box lifted to y=1.0, upright (phi=0)
 # State: [x, y, phi, vx, vy, vphi]
-x_box_target = jnp.array([0.0, 1.0, 0.0, 
-                          0.0, 0.0, 0.0])
 
 # MPC Weights
-Q_mpc = jnp.diag(jnp.array([10.0, 10.0, 10.0, 10.0, 10.0, 100.0]))
-R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e1]))*1.0
+Q_mpc = jnp.diag(jnp.array([10.0, 100.0, 40.0, 10.0, 10.0, 100.0]))
+R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e1]))*1e1
 Q_f_mpc = Q_mpc * 10.0
 
 # Low Level Controller Weights
 Q_box_acc = jnp.diag(jnp.array([10.0, 100.0, 10.0]))
-R_box_force = jnp.diag(jnp.array([0.1, 0.1, 0.1]))          
+R_box_force = jnp.diag(jnp.array([0.1, 0.1, 0.1]))*1        
 R_tau = jnp.diag(jnp.array([1.0, 1.0,
                             1.0, 1.0, 
                             1.0, 1.0])) * 0
-epsilon = 1e-3
+epsilon = 1e-4
 
 # ==========================================
 # 2. System Initialization
@@ -111,7 +110,7 @@ manipulator_sim = MySurfaceBoxManipulator(
     RN_list=RN_list,
     Q_f=Q_f,
     RN_f_list=RN_f_list,
-    integrator="contact_euler",
+    integrator="elastic_contact_euler",
     w_box=w_box,
     h_box=h_box,
     w_EE=w_EE,
@@ -178,8 +177,8 @@ def run_simulation():
         manipulator.h_box / 2,
         0.0 * jnp.pi/180,
         0.0,
-        manipulator.h_box / 2,
-        0.0
+        3*manipulator.h_box / 2,
+        2.0 * jnp.pi/180
     ])
     v_0 = jnp.zeros(9)
     x_current = jnp.hstack([q_0, v_0])

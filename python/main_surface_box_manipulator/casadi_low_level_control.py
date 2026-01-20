@@ -48,8 +48,8 @@ class CasadiLowLevelController:
         J = 0.5 * (
             ca.mtimes([d_u_box.T, R_force_np, d_u_box]) +
             ca.mtimes([d_ddq_box.T, Q_acc_np, d_ddq_box]) +
-            ca.mtimes([self.tau.T, R_tau_np, self.tau]) 
-            # epsilon * ca.mtimes(self.lam.T, self.lam)
+            ca.mtimes([self.tau.T, R_tau_np, self.tau]) +
+            epsilon * ca.mtimes(self.lam.T, self.lam)
         )
         self.opti.minimize(J)
 
@@ -106,7 +106,7 @@ class CasadiLowLevelController:
         self.opti.set_value(self.ddq_box_ref, ddq_box_ref_val)
         self.opti.set_value(self.P_A, A_val)
         self.opti.set_value(self.P_b, b_val)
-        W = A_val[0:9, 15:23]
+        W = -A_val[0:9, 15:23]
         self.opti.set_value(self.D_matrix, W[6:, :])
 
         # Initial guess (optional, but good for convergence)
