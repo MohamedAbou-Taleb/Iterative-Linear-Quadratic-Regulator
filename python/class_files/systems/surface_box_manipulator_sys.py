@@ -154,36 +154,73 @@ class MySurfaceBoxManipulator(System):
         # Kd_lin = 2.0
         # Kd_ang = 0.5
 
+
+
+        A_IB_EE1 = jnp.array([[jnp.cos(q[2]), -jnp.sin(q[2])],
+                              [jnp.sin(q[2]),  jnp.cos(q[2])]])
+        
+        A_IB_EE2 = jnp.array([[jnp.cos(q[5]), -jnp.sin(q[5])],
+                              [jnp.sin(q[5]),  jnp.cos(q[5])]])
+        
+        A_IB_box = jnp.array([[jnp.cos(q[8]), -jnp.sin(q[8])],
+                              [jnp.sin(q[8]),  jnp.cos(q[8])]])
+        # I_r_OP1 =q[0:2] + A_IB_EE1 @ jnp.array([self.w_EE/2, 0.0])  # End Effector 1 tip position
+        # I_r_OP2 =q[3:5] - A_IB_EE2 @ jnp.array([self.w_EE/2, 0.0])  # End Effector 2 tip position
+        I_r_OP1 = q[0:2]
+        I_r_OP2 = q[3:5]
+        I_v_OP1 =v[0:2] + jnp.cross(v[2] * jnp.array([0.0, 0.0, 1.0]), jnp.concatenate([I_r_OP1, jnp.array([0.0])]))[0:2]
+        I_v_OP2 =v[3:5] + jnp.cross(v[5] * jnp.array([0.0, 0.0, 1.0]), jnp.concatenate([I_r_OP2, jnp.array([0.0])]))[0:2]
+        I_r_Obox = q[6:8]
+
         Kp_pos = 10.0
         Kp_ang = 6.0
         Kd_lin = 5.0
         Kd_ang = 2.0
         
+        # Kp_pos = 20.0
+        # Kp_ang = 6.0
+        # Kd_lin = 10.0
+        # Kd_ang = 2.0
+
         # Desired offsets relative to box center (approximate grasping)
         # EE1 (Left)
         des_x1 = q[6] - self.w_box/2 - self.w_EE/2 *0.99 # Slightly to the left
         des_y1 = q[7]
+
+        # des_x1 = q[6] - self.w_box/2*0.95 # Slightly to the left
+        # des_y1 = q[7]
         # des_phi1 = 0.0
         des_phi1 = q[8]
         
         # EE2 (Right)
         des_x2 = q[6] + self.w_box/2 + self.w_EE/2 *0.99 # Slightly to the right
         des_y2 = q[7]
+        # des_x2 = q[6] + self.w_box/2*0.95 # Slightly to the right
+        # des_y2 = q[7]
+        I_r_OP1_des = I_r_Obox + A_IB_box @ jnp.array([-self.w_box/2*0.95, 0.0])
+        I_r_OP2_des = I_r_Obox + A_IB_box @ jnp.array([ self.w_box/2*0.95, 0.0])
         # des_phi2 = 0.0
         des_phi2 = q[8]
         # Errors (EE1)
-        e_1 = jnp.array([des_x1, des_y1, des_phi1]) - q[0:3]
+        e_1 = jnp.array([des_x1, des_y1, des_phi1]) - jnp.concatenate([I_r_OP1, jnp.array([q[2]])])
         de_1 = -v[0:3]
+        # e_1 = jnp.concatenate([I_r_OP1_des - I_r_OP1, jnp.array([des_phi1 - q[2]])])
+        # de_1 = -jnp.concatenate([I_v_OP1, jnp.array([v[2]])])
 
         # u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1 + jnp.array([0.5, 0.0, 0.0])
         u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1
         # Errors (EE2)
-        e_2 = jnp.array([des_x2, des_y2, des_phi2]) - q[3:6]
+        # e_2 = jnp.array([des_x2, des_y2, des_phi2]) - q[3:6]
+        # de_2 = -v[3:6]
+        e_2 = jnp.array([des_x2, des_y2, des_phi2]) - jnp.concatenate([I_r_OP2, jnp.array([q[5]])])
         de_2 = -v[3:6]
+        # e_2 = jnp.concatenate([I_r_OP2_des - I_r_OP2, jnp.array([des_phi2 - q[5]])])
+        # de_2 = -jnp.concatenate([I_v_OP2, jnp.array([v[5]])])
         # u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2 + jnp.array([-0.5, 0.0, 0.0])
         u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2
         # Combine into generalized forces (9x1) - applied to EEs only
         u_PD = jnp.concatenate([u_1, u_2, jnp.zeros(3)])
+
         return u_PD
     
     def _contact_jacobian(self, q):
@@ -301,9 +338,9 @@ if __name__ == "__main__":
 
     # --- Initial State ---
     # EE1 (Left)
-    q_ee1 = jnp.array([-0.6, 0.25, 1*30*jnp.pi/180])
+    q_ee1 = jnp.array([-0.6, 0.25, 0*30*jnp.pi/180])
     # EE2 (Right)
-    q_ee2 = jnp.array([0.9, 0.25, 1*30*jnp.pi/180])
+    q_ee2 = jnp.array([0.9, 0.25, 0*30*jnp.pi/180])
     # Box (Center, on ground)
     # h_box/2 is the y-center when on ground
     q_box = jnp.array([0.0, 1*h_box/2, 0.0]) 

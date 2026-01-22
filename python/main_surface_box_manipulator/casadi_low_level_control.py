@@ -96,13 +96,17 @@ class CasadiLowLevelController:
         }
         self.opti.solver('ipopt', opts)
 
-    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val):
+    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9)):
         # Set parameter values
+        W = -A_val[0:9, 15:23]
+        baumgarte_gain = 100.0
+        gamma = W.T @ v
+        b_val[9:17] += -baumgarte_gain * gamma
         self.opti.set_value(self.u_box_ref, u_box_ref_val)
         self.opti.set_value(self.ddq_box_ref, ddq_box_ref_val)
         self.opti.set_value(self.P_A, A_val)
         self.opti.set_value(self.P_b, b_val)
-        W = -A_val[0:9, 15:23]
+
         self.opti.set_value(self.D_matrix, W[6:, :])
 
         # [OPTIONAL] Warm start logic could go here

@@ -20,7 +20,7 @@ dt = 0.001
 dt_control = 0.01
 control_ratio = int(dt_control / dt)
 T_horizon = 1.0
-T_sim = 7.0
+T_sim = 10.0
 
 # Dimensions
 w_box = 0.5
@@ -30,7 +30,7 @@ h_EE = 0.3
 
 # Target: Box lifted to y=1.0, upright (phi=0)
 # State: [x, y, phi, vx, vy, vphi]
-x_box_target = jnp.array([1.0, 1.0, 0*jnp.pi/180.0, 0.0, 0.0, 0.0])
+x_box_target = jnp.array([1.0, 0.6, 45*jnp.pi/180.0, 0.0, 0.0, 0.0])
 
 # Weights
 # u is size 6
@@ -46,8 +46,13 @@ RN_f_list = [100.0] * 6
 
 # Friction (6 contacts) - high friction for grasp, low for ground slide?
 # Order: [U1, L1, U2, L2, GL, GR]
-mu = jnp.array([4.0, 4.0, 4.0, 4.0, 1.0, 1.0])
+# mu = jnp.array([4.0, 4.0, 4.0, 4.0, 1.0, 1.0])/5.0
+mu = jnp.array([0.8, 0.8, 0.8, 0.8, 0.2, 0.2])
 
+# m_box = 1.0
+# m_EE = 1.0
+m_box = 1.0
+m_EE = 1.0
 # --- Instantiate System ---
 manipulator = MySurfaceBoxManipulator(
     dt=dt,
@@ -62,8 +67,8 @@ manipulator = MySurfaceBoxManipulator(
     h_box=h_box,
     w_EE=w_EE,
     h_EE=h_EE,
-    m_box=1.0,
-    m_EE=1.0,
+    m_box=m_box,
+    m_EE=m_EE,
     mu=mu,
 )
 
@@ -114,8 +119,8 @@ manipulator_sim = MySurfaceBoxManipulator(
     h_box=h_box,
     w_EE=w_EE,
     h_EE=h_EE,
-    m_box=1.0,
-    m_EE=1.0,
+    m_box=m_box,
+    m_EE=m_EE,
     mu=mu,
 )
 
@@ -212,7 +217,9 @@ def run_simulation():
             # Check gap function
             g_N = manipulator_sim._gap_function(x_current[:manipulator_sim.n_q])
             
-            if g_N[0] <= 0.0 and g_N[1] <= 0.0 and g_N[2] <= 0.0 and g_N[3] <= 0.0:
+            # if g_N[0] <= 0.0 and g_N[1] <= 0.0 and g_N[2] <= 0.0 and g_N[3] <= 0.0:
+            # check if any of the EEs are in contact simultaneously on each side, i.e., at least one contact per EE
+            if (g_N[0] <= 0.0 or g_N[1] <= 0.0) and (g_N[2] <= 0.0 or g_N[3] <= 0.0):
             # if g_N[0] <= 0.0 and g_N[2] <= 0.0 :
                     # 1. Solve MPC
                 _, U_box_bar, ddqdt_box, _ = box_MPC_controller.optimize_trajectory(x_0=x_box)
@@ -235,10 +242,12 @@ def run_simulation():
                     u_box_ref_val=uk_box, 
                     ddq_box_ref_val=ddqdt_box[:, 0],
                     A_val=A_np, 
-                    b_val=b_np
+                    b_val=b_np,
+                    v=np.array(v)
                 )
+            #     uk_val += manipulator_sim._PD_controller(q, v)[0:6]
             # else:
-            #     uk_val = manipulator_sim._PD_controller(q, v)
+            #     uk_val = manipulator_sim._PD_controller(q, v)[0:6]
 
         # Store History
         uk = jnp.array(uk_val)
@@ -306,4 +315,4 @@ if __name__ == "__main__":
 
     # --- Animation ---
     anim = AnimationSurfaceBox(manipulator, X, tspan, dt)
-    anim.animate(fullscreen=True, save_video=False, filename='box_transport.mp4')
+    anim.animate(fullscreen=True, save_video=True, filename='box_transport.mp4')
