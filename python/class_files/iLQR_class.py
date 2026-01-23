@@ -25,6 +25,7 @@ class iLQR:
         min_alpha: float = 1e-8,
         verbose: bool = True,
         ctrl_dt: float = None,  # <--- NEW ARGUMENT
+        return_percussion: bool = False,
     ):
 
         self.system = system

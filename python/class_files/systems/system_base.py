@@ -105,7 +105,7 @@ class System(ABC):
             raise ValueError(f"Unknown integrator: {integrator}")
 
         # --- JIT Compile Dynamics & Derivatives ---
-        self.f_fcn = jit(self._f_fcn)
+        self.f_fcn = jit(self._f_fcn, static_argnames=['return_percussion'])
         self.f_x_fcn = jit(_f_x)
         self.f_u_fcn = jit(_f_u)
 
@@ -188,7 +188,7 @@ class System(ABC):
     # Position-Based Contact Implicit Integrator
     # =========================================================
 
-    def _contact_euler_integrator(self, x_state, u_control):
+    def _contact_euler_integrator(self, x_state, u_control, return_percussion=False):
         qk = x_state[: self.n_q]
         vk = x_state[self.n_q :]
 
@@ -208,11 +208,13 @@ class System(ABC):
 
         # Pass 'self' explicitly because the custom_jvp decorated function
         # is treated as a static function by JAX
-        q_next, v_next, _ = self._solve_contact_dynamics(
+        q_next, v_next, P = self._solve_contact_dynamics(
             self, qk, vk, u_control, r, dP_guess
         )
-
-        return jnp.concatenate([q_next, v_next])
+        if return_percussion:
+            return jnp.concatenate([q_next, v_next, P])
+        else:
+            return jnp.concatenate([q_next, v_next])
 
     @partial(jax.custom_jvp, nondiff_argnums=(0,))
     def _solve_contact_dynamics(self, qk, vk, uk, r, dP_guess):
@@ -337,7 +339,7 @@ class System(ABC):
         # Ensure final state is consistent (run one last dynamics solve)
         z_star_fin = solve_dynamics_newton(final_dP, final_state[1])
         qk1_fin, vk1_fin = z_star_fin[: self.n_q], z_star_fin[self.n_q :]
-
+        
         return qk1_fin, vk1_fin, final_dP
 
     @_solve_contact_dynamics.defjvp

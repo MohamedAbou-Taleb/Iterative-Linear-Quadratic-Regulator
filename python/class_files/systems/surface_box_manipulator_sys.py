@@ -248,7 +248,8 @@ class MySurfaceBoxManipulator(System):
 
     def _l_fcn(self, x, u):
         q = x[: self.n_q]
-        v = x[self.n_q :]
+        v = x[self.n_q :self.n_q + self.n_v]
+        P = x[self.n_q + self.n_v :]
         
         # Box State: q[6:9], v[6:9] -> indices 6,7,8, 15,16,17
         x_box = jnp.concatenate([q[6:9], v[6:9]])
