@@ -20,7 +20,7 @@ dt = 0.001
 dt_control = 0.01
 control_ratio = int(dt_control / dt)
 T_horizon = 1.0
-T_sim = 10.0
+T_sim = 5.0
 
 # Dimensions
 w_box = 0.5
@@ -34,10 +34,10 @@ x_box_target = jnp.array([1.0, 0.6, 45*jnp.pi/180.0, 0.0, 0.0, 0.0])
 
 # Weights
 # u is size 6
-R = jnp.diag(1e-2 * jnp.ones(6)) 
+R = jnp.diag(1e-2 * jnp.ones(6)) *1e-2
 
 # Box tracking (x, y, phi, vx, vy, vphi)
-Q_box = jnp.diag(jnp.array([10.0, 10.0, 1.0, 1.0, 1.0, 1.0]))
+Q_box = jnp.diag(jnp.array([10.0, 10.0, 1.0, 1.0, 100.0, 1.0]))
 Q_f = Q_box * 10.0
 
 # Gap weights (6 contacts)
@@ -88,8 +88,8 @@ x_0 = jnp.concatenate([q_0, v_0])
 # State: [x, y, phi, vx, vy, vphi]
 
 # MPC Weights
-Q_mpc = jnp.diag(jnp.array([10.0, 100.0, 40.0, 10.0, 10.0, 100.0]))
-R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e1]))*1e1
+Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 400.0, 30.0, 30.0, 30.0]))           
+R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*10
 Q_f_mpc = Q_mpc * 10.0
 
 # Low Level Controller Weights
@@ -186,7 +186,6 @@ def run_simulation():
     ])
     v_0 = jnp.zeros(9)
     x_current = jnp.hstack([q_0, v_0])
-
     # Storage Setup
     tspan_sim = jnp.arange(0, T_sim + box_MPC_controller.dt, box_MPC_controller.dt)
     N_sim = len(tspan_sim) - 1
@@ -243,7 +242,8 @@ def run_simulation():
                     ddq_box_ref_val=ddqdt_box[:, 0],
                     A_val=A_np, 
                     b_val=b_np,
-                    v=np.array(v)
+                    v=np.array(v),
+                    u_prev_val=uk_val
                 )
             #     uk_val += manipulator_sim._PD_controller(q, v)[0:6]
             # else:
@@ -315,4 +315,4 @@ if __name__ == "__main__":
 
     # --- Animation ---
     anim = AnimationSurfaceBox(manipulator, X, tspan, dt)
-    anim.animate(fullscreen=True, save_video=True, filename='box_transport.mp4')
+    anim.animate(fullscreen=True, save_video=False, filename='box_transport.mp4')

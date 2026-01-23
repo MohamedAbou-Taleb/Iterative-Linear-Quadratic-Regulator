@@ -26,6 +26,8 @@ class CasadiLowLevelController:
         self.P_A = self.opti.parameter(17, 23) 
         self.P_b = self.opti.parameter(17)     
 
+        self.u_prev = self.opti.parameter(6)
+
         # --- 3. Cost Function Formulation ---
         self.D_matrix = self.opti.parameter(3, 8) 
         u_box_pred = ca.mtimes(self.D_matrix, self.lam) 
@@ -46,6 +48,8 @@ class CasadiLowLevelController:
         W_defect = 1e6 
         d_ddq_1 = self.ddq[0:3] - self.ddq_box_ref
         d_ddq_2 = self.ddq[3:6] - self.ddq_box_ref
+
+        w_smooth = 2.0
         # Build Objective
         J = 0.5 * (
             ca.mtimes([d_u_box.T, R_force_np, d_u_box]) +
@@ -53,7 +57,8 @@ class CasadiLowLevelController:
             ca.mtimes([self.tau.T, R_tau_np, self.tau]) +
             epsilon * ca.mtimes(self.lam.T, self.lam) +
             # [NEW] Penalize the defect
-            W_defect * ca.mtimes(self.defect.T, self.defect)
+            W_defect * ca.mtimes(self.defect.T, self.defect) +
+            w_smooth * ca.mtimes([(self.tau - self.u_prev).T, (self.tau - self.u_prev)])
         )
         # J += 0.5 * ( ca.mtimes([d_ddq_1.T, Q_acc_np, d_ddq_1]) +
         #              ca.mtimes([d_ddq_2.T, Q_acc_np, d_ddq_2]) ) 
@@ -88,6 +93,11 @@ class CasadiLowLevelController:
         self.opti.subject_to(-manipulator.mu[3] * self.lam[7] <= self.lam[6])
         self.opti.subject_to(manipulator.mu[3] * self.lam[7] >= self.lam[6])
 
+        # Torque limits
+        tau_max = 20.0
+        self.opti.subject_to(self.tau <= tau_max)
+        self.opti.subject_to(self.tau >= -tau_max)
+
         # --- 6. Solver Settings ---
         opts = {
             'ipopt.print_level': 0, 
@@ -96,7 +106,7 @@ class CasadiLowLevelController:
         }
         self.opti.solver('ipopt', opts)
 
-    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9)):
+    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9), u_prev_val=np.zeros(6)):
         # Set parameter values
         W = -A_val[0:9, 15:23]
         baumgarte_gain = 100.0
@@ -109,6 +119,7 @@ class CasadiLowLevelController:
 
         self.opti.set_value(self.D_matrix, W[6:, :])
 
+        self.opti.set_value(self.u_prev, u_prev_val)
         # [OPTIONAL] Warm start logic could go here
         # self.opti.set_initial(self.ddq, prev_ddq)
 
