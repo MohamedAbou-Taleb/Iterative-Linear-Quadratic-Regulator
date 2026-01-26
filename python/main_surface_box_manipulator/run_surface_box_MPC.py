@@ -230,7 +230,7 @@ def run_simulation():
                 h = manipulator._generalized_forces(q, v, u0_dummy)
                 W_dot_T_v = manipulator._contact_jacobian_dot_transpose_dqdt(q,v)[0:8]
                 A_static = jnp.block([[M, -S, -W], [W.T, jnp.zeros((8, 14))]])
-                b_static = jnp.hstack([h, W_dot_T_v])
+                b_static = jnp.hstack([h, -W_dot_T_v])
                 C_static = jnp.hstack([jnp.zeros((3, 6)), jnp.eye(3, 3)])
 
                 # Convert to numpy for Casadi

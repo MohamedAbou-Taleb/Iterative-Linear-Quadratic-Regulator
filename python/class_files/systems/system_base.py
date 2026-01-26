@@ -167,17 +167,17 @@ class System(ABC):
         v_dot = jnp.linalg.solve(M, h)
         return jnp.concatenate([v, v_dot])
 
-    def _euler_integrator(self, x, u):
+    def _euler_integrator(self, x, u, return_percussion=False):
         x_dot = self._f_cont_fcn(x, u)
         return x + x_dot * self.dt
 
-    def _midpoint_integrator(self, x, u):
+    def _midpoint_integrator(self, x, u, return_percussion=False):
         k1 = self._f_cont_fcn(x, u)
         x_mid = x + (self.dt / 2.0) * k1
         k2 = self._f_cont_fcn(x_mid, u)
         return x + self.dt * k2
 
-    def _rk4_integrator(self, x, u):
+    def _rk4_integrator(self, x, u, return_percussion=False):
         k1 = self._f_cont_fcn(x, u)
         k2 = self._f_cont_fcn(x + self.dt / 2 * k1, u)
         k3 = self._f_cont_fcn(x + self.dt / 2 * k2, u)
@@ -426,7 +426,7 @@ class System(ABC):
 
         return (qk1, vk1, dP_star), (dqk1, dvk1, ddP_star)
 
-    def _elastic_contact_euler_integrator(self, x_state, u_control):
+    def _elastic_contact_euler_integrator(self, x_state, u_control, return_percussion=False):
         qk = x_state[: self.n_q]
         vk = x_state[self.n_q :]
 
@@ -678,7 +678,7 @@ class System(ABC):
 
         return (qk1, vk1, dP_star), (dqk1, dvk1, ddP_star)
 
-    def _moreau_integrator(self, x_state, u_control):
+    def _moreau_integrator(self, x_state, u_control, return_percussion=False):
         qk = x_state[: self.n_q]
         vk = x_state[self.n_q :]
 

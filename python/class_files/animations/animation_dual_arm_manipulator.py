@@ -4,7 +4,6 @@ import cv2
 import time
 from vtk.util import numpy_support
 
-
 class AnimationDualArmBox:
 
     def __init__(self, sys, X_data, tspan, dt):
@@ -81,10 +80,28 @@ class AnimationDualArmBox:
         
         return actor
 
+    def create_sphere_actor(self, radius, color):
+        """
+        Creates a high-resolution sphere actor (smooth, no visible edges).
+        """
+        sphere = vtk.vtkSphereSource()
+        sphere.SetRadius(radius)
+        # Increase resolution so it looks round, not faceted
+        sphere.SetThetaResolution(50) 
+        sphere.SetPhiResolution(50)
+
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(sphere.GetOutputPort())
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(color)
+        return actor
+
     def create_environment(self):
         # --- Geometry Setup ---
         
-        # 1. Left Arm
+        # 1. Left Arm Links
         # Link 1: Pivots at Base. Shift geometry by +l1/2 so origin is at the start.
         self.actor_L1 = self.create_geometry_actor(self.l1, self.link_width, self.link_width, 
                                                    [0.1, 0.1, 0.6], shift_x=self.l1/2)
@@ -93,64 +110,65 @@ class AnimationDualArmBox:
         self.actor_L2 = self.create_geometry_actor(self.l2, self.link_width, self.link_width, 
                                                    [0.2, 0.2, 0.7], shift_x=self.l2/2)
         
-        # EE1: Attached at Wrist. Centered geometry (shift=0) or adjust as needed.
+        # EE1: Attached at Wrist. Centered geometry.
         self.actor_EE1 = self.create_geometry_actor(self.w_EE, self.h_EE, self.w_EE, 
                                                     [0.3, 0.3, 0.9], shift_x=0.0)
 
-        # 2. Right Arm
+        # 2. Right Arm Links
         self.actor_R1 = self.create_geometry_actor(self.l1, self.link_width, self.link_width, 
                                                    [0.6, 0.1, 0.1], shift_x=self.l1/2)
         self.actor_R2 = self.create_geometry_actor(self.l2, self.link_width, self.link_width, 
                                                    [0.7, 0.2, 0.2], shift_x=self.l2/2)
         self.actor_EE2 = self.create_geometry_actor(self.w_EE, self.h_EE, self.w_EE, 
-                                                    [0.9, 0.3, 0.3], shift_x=0.0)
+                                                     [0.9, 0.3, 0.3], shift_x=0.0)
 
         # 3. Box
         self.actor_box = self.create_geometry_actor(self.w_box, self.h_box, self.w_box, 
-                                                    [0.4, 0.8, 0.4])
+                                                    [144 / 255, 213 / 255, 255 / 255])
+        
 
         # 4. Floor
         self.actor_floor = self.create_geometry_actor(4.0, 0.02, 2.0, [0.8, 0.8, 0.8])
-        # Static shift for floor down
         floor_tf = vtk.vtkTransform()
         floor_tf.Translate(0, -0.01, 0)
         self.actor_floor.SetUserTransform(floor_tf)
 
-        # 5. Base Markers
-        sphere_L = vtk.vtkSphereSource()
-        sphere_L.SetRadius(0.05)
-        mapper_SL = vtk.vtkPolyDataMapper()
-        mapper_SL.SetInputConnection(sphere_L.GetOutputPort())
-        actor_SL = vtk.vtkActor()
-        actor_SL.SetMapper(mapper_SL)
-        actor_SL.SetPosition(self.sys.x_base_L, self.sys.y_base_L, 0)
-        actor_SL.GetProperty().SetColor([0,0,0])
+        # 5. Base Spheres (Static)
+        # Made slightly larger and smoother
+        self.actor_BaseL = self.create_sphere_actor(0.06, [0.1, 0.1, 0.1]) # 
+        self.actor_BaseL.SetPosition(self.sys.x_base_L, self.sys.y_base_L, 0)
 
-        sphere_R = vtk.vtkSphereSource()
-        sphere_R.SetRadius(0.05)
-        mapper_SR = vtk.vtkPolyDataMapper()
-        mapper_SR.SetInputConnection(sphere_R.GetOutputPort())
-        actor_SR = vtk.vtkActor()
-        actor_SR.SetMapper(mapper_SR)
-        actor_SR.SetPosition(self.sys.x_base_R, self.sys.y_base_R, 0)
-        actor_SR.GetProperty().SetColor([0,0,0])
+        self.actor_BaseR = self.create_sphere_actor(0.06, [0.1, 0.1, 0.1])
+        self.actor_BaseR.SetPosition(self.sys.x_base_R, self.sys.y_base_R, 0)
+
+        # 6. Joint Spheres (Dynamic)
+        # These will represent the rotational joints at Elbows and Wrists
+        joint_radius = 0.04
+        # joint_color_L = [0.2, 0.2, 0.7] # Match Left arm theme
+        # joint_color_R = [0.7, 0.2, 0.2] # Match Right arm theme
+        joint_color_L = [0.0, 0.0, 0.0] # Black for visibility
+        joint_color_R = [0.0, 0.0, 0.0] # Black for visibility 
+        # Left Elbow (Located at origin of Link 2)
+        self.actor_joint_L2 = self.create_sphere_actor(joint_radius, joint_color_L)
+        # Left Wrist (Located at origin of EE)
+        self.actor_joint_EE1 = self.create_sphere_actor(joint_radius/2, joint_color_L)
+
+        # Right Elbow
+        self.actor_joint_R2 = self.create_sphere_actor(joint_radius, joint_color_R)
+        # Right Wrist
+        self.actor_joint_EE2 = self.create_sphere_actor(joint_radius/2, joint_color_R)
 
         # --- Link Matrices to Actors ---
         def link_matrix(actor, matrix):
             t = vtk.vtkMatrixToLinearTransform()
             t.SetInput(matrix)
-            tf = vtk.vtkTransformPolyDataFilter()
-            # Chain the previous filter (geometry) to this new transform
-            # Note: The actor already has a mapper connected to 'create_geometry_actor' output.
-            # To update the matrix dynamically, simpler to set UserMatrix on the actor directly.
-            # But 'vtkMatrixToLinearTransform' is good for filter chains.
-            # Here we follow the style of AnimationSurfaceBox:
-            # Using vtkTransformPolyDataFilter for the matrix update
             
-            # Re-build pipeline for dynamic update:
-            # Source -> Shift(static) -> MatrixTransform(dynamic) -> Mapper -> Actor
+            # For spheres, we didn't use a TransformPolyDataFilter in creation,
+            # so we must check if the actor already has a filter chain or just a mapper.
+            # Simpler approach for VTK dynamic updates: Just set the UserMatrix.
+            # However, to keep consistent with your previous code structure (Filter pipeline):
             
-            # 1. Get the shift filter output (from create_geometry_actor)
+            # 1. Get current input connection
             prev_out = actor.GetMapper().GetInputConnection(0, 0)
             
             # 2. Create Dynamic Transform Filter
@@ -161,15 +179,27 @@ class AnimationDualArmBox:
             # 3. Re-connect Mapper
             actor.GetMapper().SetInputConnection(dyn_filter.GetOutputPort())
 
+        # Link Geometry to Kinematic Matrices
         link_matrix(self.actor_L1, self.H_L1)
         link_matrix(self.actor_L2, self.H_L2)
         link_matrix(self.actor_EE1, self.H_EE1)
+        
         link_matrix(self.actor_R1, self.H_R1)
         link_matrix(self.actor_R2, self.H_R2)
         link_matrix(self.actor_EE2, self.H_EE2)
+        
         link_matrix(self.actor_box, self.H_box)
 
-        # 6. Text
+        # Link the new Joint Spheres to the same matrices
+        # Elbow Sphere tracks Link 2's origin (which IS the elbow)
+        link_matrix(self.actor_joint_L2, self.H_L2) 
+        link_matrix(self.actor_joint_R2, self.H_R2)
+
+        # Wrist Sphere tracks EE's origin (which IS the wrist)
+        link_matrix(self.actor_joint_EE1, self.H_EE1)
+        link_matrix(self.actor_joint_EE2, self.H_EE2)
+
+        # 7. Text
         self.text_actor = vtk.vtkTextActor()
         self.text_actor.SetInput("t = 0.00 s")
         txt_prop = self.text_actor.GetTextProperty()
@@ -180,12 +210,17 @@ class AnimationDualArmBox:
 
         # --- Renderer & Window ---
         self.renderer = vtk.vtkRenderer()
-        actors = [self.actor_L1, self.actor_L2, self.actor_EE1,
-                  self.actor_R1, self.actor_R2, self.actor_EE2,
-                  self.actor_box, self.actor_floor, self.text_actor,
-                  actor_SL, actor_SR]
         
-        for a in actors:
+        actors_list = [
+            self.actor_L1, self.actor_L2, self.actor_EE1,
+            self.actor_R1, self.actor_R2, self.actor_EE2,
+            self.actor_box, self.actor_floor, self.text_actor,
+            self.actor_BaseL, self.actor_BaseR,
+            self.actor_joint_L2, self.actor_joint_EE1,
+            self.actor_joint_R2, self.actor_joint_EE2
+        ]
+        
+        for a in actors_list:
             self.renderer.AddActor(a)
             
         self.renderer.SetBackground(1, 1, 1)
@@ -203,9 +238,19 @@ class AnimationDualArmBox:
 
         # Camera
         camera = self.renderer.GetActiveCamera()
-        camera.SetPosition(0, 1.0, 3.5)
-        camera.SetFocalPoint(0, 0.5, 0.0)
-
+        # camera.SetPosition(0, 1.0, 3.5)
+        # camera.SetFocalPoint(0, 0.5, 0.0)
+        # camera.SetViewUp(0, 1, 0)
+        # Camera
+        
+        # 1. Position: Center X and Y at 0, move Z far out (e.g., 5.0)
+        camera.SetPosition(0, 0, 5.0) 
+        
+        # 2. Focal Point: Look at the origin (center of your workspace)
+        camera.SetFocalPoint(0, 0, 0) 
+        
+        # 3. View Up: Ensure the Y-axis points "up" on the screen
+        camera.SetViewUp(0, 1, 0)
     def update_matrix(self, vtk_matrix, x, y, phi):
         """
         Updates the 4x4 VTK matrix for a 2D rigid body transformation
@@ -246,7 +291,6 @@ class AnimationDualArmBox:
         
         # --- Left Arm ---
         # Link 1: Base -> Elbow
-        # Pos: Base Location. Angle: q[0]
         self.update_matrix(self.H_L1, 
                            self.sys.x_base_L, self.sys.y_base_L, 
                            q_t[0])
@@ -256,7 +300,7 @@ class AnimationDualArmBox:
         self.update_matrix(self.H_L2,
                            fk_jax['joint_L2'][0], fk_jax['joint_L2'][1],
                            q_t[0] + q_t[1])
-                           
+                            
         # EE1: Wrist
         # Pos: Wrist Location. Angle: q[0] + q[1] + q[2]
         self.update_matrix(self.H_EE1,
