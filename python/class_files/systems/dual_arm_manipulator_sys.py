@@ -250,9 +250,11 @@ class MyDualArmManipulator(System):
         # Kd_lin = 5.0
         # Kd_ang = 2.0
 
-        Kp_pos = 100.0
+        Kp_pos_x = 100.0
+        Kp_pos_y = 500.0
         Kp_ang = 20.0
-        Kd_lin = 10.0
+        Kd_lin_x = 10.0
+        Kd_lin_y = 30.0
         Kd_ang = 2.0
         
 
@@ -274,12 +276,12 @@ class MyDualArmManipulator(System):
         # Errors (EE1)
         e_1 = jnp.array([des_x1, des_y1, des_phi1]) - jnp.concatenate([I_r_OP1, jnp.array([phi_EE1])])
         de_1 = -jnp.concatenate([I_v_OP1, jnp.array([v[0] + v[1] + v[2]])])
-        u_1 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_1 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_1
+        u_1 = jnp.array([Kp_pos_x, Kp_pos_y, Kp_ang]) * e_1 + jnp.array([Kd_lin_x, Kd_lin_y, Kd_ang]) * de_1
         # Errors (EE2)
         e_2 = jnp.array([des_x2, des_y2, des_phi2]) - jnp.concatenate([I_r_OP2, jnp.array([phi_EE2])])
         de_2 = -jnp.concatenate([I_v_OP2, jnp.array([v[3] + v[4] + v[5]])])
         # u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2 + jnp.array([-0.5, 0.0, 0.0])
-        u_2 = jnp.array([Kp_pos, Kp_pos, Kp_ang]) * e_2 + jnp.array([Kd_lin, Kd_lin, Kd_ang]) * de_2
+        u_2 = jnp.array([Kp_pos_x, Kp_pos_y, Kp_ang]) * e_2 + jnp.array([Kd_lin_y, Kd_lin_y, Kd_ang]) * de_2
         # Combine into generalized forces (9x1) - applied to EEs only
         # u_PD = jnp.concatenate([u_1, u_2, jnp.zeros(3)])
         F_1 = u_1[:2]
