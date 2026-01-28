@@ -47,7 +47,7 @@ Q_box_sys = jnp.diag(jnp.array([10.0, 10.0, 1.0, 1.0, 1.0, 1.0]))
 RN_list = [100.0] * 6
 RN_f_list = [1000.0] * 6
 # mu = jnp.array([0.6] * 6) # Moderate friction
-mu = jnp.array([1.0, 1.0, 1.0, 1.0, 0.2, 0.2])*4.0 # High friction for dual arm
+mu = jnp.array([1.0, 1.0, 1.0, 1.0, 0.2, 0.2])*1.0 # High friction for dual arm
 # Initial Target (Placeholder)
 x_box_target_init = jnp.array([0.15, 0.6, 5.0 * jnp.pi/180, 0.0, 0.0, 0.0])
 
@@ -76,7 +76,7 @@ manipulator = MyDualArmManipulator(
         mu=mu,
         m_EE=m_EE,
         theta_EE=theta_EE,
-        m_box=m_box*0.5 ,
+        m_box=m_box,
         theta_box=theta_box,
         # --- Specify Base Positions Here ---
         x_base_L = -0.8,  # Move Left Arm further left
@@ -110,10 +110,10 @@ manipulator_sim = MyDualArmManipulator(
 
 # --- 2. Initial State ---
 # Left Arm: Shoulder=45deg, Elbow=-90deg
-q_L = jnp.array([-90*jnp.pi/180, 90*jnp.pi/180, 0*jnp.pi/180]) 
+q_L = jnp.array([-120*jnp.pi/180, 90*jnp.pi/180, 0*jnp.pi/180]) 
 
 # Right Arm: Shoulder=135deg, Elbow=90deg
-q_R = jnp.array([( 90 - 180 )*jnp.pi/180, -90*jnp.pi/180, 180*jnp.pi/180]) 
+q_R = jnp.array([( 70 - 180 )*jnp.pi/180, -140*jnp.pi/180, 180*jnp.pi/180]) 
 
 # Box: Starts slightly in the air
 q_box = jnp.array([0.0, 1*manipulator.h_box/2, 0.0]) 
@@ -176,7 +176,9 @@ casadi_controller = CasadiLowLevelControllerDualArm(
     R_tau=R_tau,
     C=C_static,
     epsilon=epsilon,
-    tau_max=500.0 # Nm
+    tau_max=np.array([50.0, 30.0, 10.0, 50.0, 30.0, 10.0]),
+    lambda_N_min = 0.0
+    # tau_max=500.0 # Nm
 )
 
 # ==========================================
