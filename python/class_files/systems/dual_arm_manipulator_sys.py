@@ -190,8 +190,7 @@ class MyDualArmManipulator(System):
         
         # If you want a Task-Space PD like the previous example, it requires inverse kinematics
         # or Jacobian transpose control. For now, we apply joint damping.
-        f_PD = self._PD_controller(q, v)
-        f_total = f_total + f_PD
+        f_total = f_total
         h = f_total + f_damping
         return h
 
@@ -246,9 +245,14 @@ class MyDualArmManipulator(System):
         
         I_r_Obox = q[6:8]
 
-        Kp_pos = 20.0
+        # Kp_pos = 20.0
+        # Kp_ang = 20.0
+        # Kd_lin = 5.0
+        # Kd_ang = 2.0
+
+        Kp_pos = 100.0
         Kp_ang = 20.0
-        Kd_lin = 5.0
+        Kd_lin = 10.0
         Kd_ang = 2.0
         
 

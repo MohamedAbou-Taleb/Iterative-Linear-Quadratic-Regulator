@@ -18,7 +18,7 @@ dt = 0.001
 dt_control = 0.01
 control_ratio = int(dt_control / dt)
 T_horizon = 1.0
-T_sim = 6.0
+T_sim = 4.0
 
 # Dimensions (Must match system definition)
 w_box = 0.4
@@ -48,19 +48,46 @@ RN_list = [100.0] * 6
 RN_f_list = [1000.0] * 6
 # mu = jnp.array([0.6] * 6) # Moderate friction
 mu = jnp.array([1.0, 1.0, 1.0, 1.0, 0.2, 0.2])*4.0 # High friction for dual arm
-# Target (Placeholder)
-x_box_target = jnp.array([0.15, 0.6, 5.0 * jnp.pi/180, 0.0, 0.0, 0.0])
+# Initial Target (Placeholder)
+x_box_target_init = jnp.array([0.15, 0.6, 5.0 * jnp.pi/180, 0.0, 0.0, 0.0])
 
 # Weights
 R = jnp.diag(1e-4 * jnp.ones(6)) 
 Q_box = jnp.diag(jnp.array([10.0, 10.0, 1.0, 1.0, 1.0, 1.0]))
 Q_f = Q_box * 10.0
+m_EE = 0.5
+theta_EE = 0.05
+m_box = 1.0
+theta_box = 0.1
 
 # --- Instantiate System ---
 # Base positions adjusted to ensure workspace reachability
 manipulator = MyDualArmManipulator(
         dt=dt,
-        box_target_state=x_box_target,
+        box_target_state=x_box_target_init,
+        R=R,
+        Q_box=Q_box,
+        RN_list=RN_list,
+        Q_f=Q_f,
+        RN_f_list=RN_f_list,
+        integrator="moreau",
+        w_box=w_box*1.0,
+        h_box=h_box,
+        mu=mu,
+        m_EE=m_EE,
+        theta_EE=theta_EE,
+        m_box=m_box*0.5 ,
+        theta_box=theta_box,
+        # --- Specify Base Positions Here ---
+        x_base_L = -0.8,  # Move Left Arm further left
+        y_base_L = 0.7,   # Raise Left Arm base
+        x_base_R = 0.8,   # Move Right Arm further right
+        y_base_R = 0.7    # Raise Right Arm base
+    )
+
+manipulator_sim = MyDualArmManipulator(
+        dt=dt,
+        box_target_state=x_box_target_init,
         R=R,
         Q_box=Q_box,
         RN_list=RN_list,
@@ -70,6 +97,10 @@ manipulator = MyDualArmManipulator(
         w_box=w_box,
         h_box=h_box,
         mu=mu,
+        m_EE=m_EE,
+        theta_EE=theta_EE,
+        m_box=m_box,
+        theta_box=theta_box,
         # --- Specify Base Positions Here ---
         x_base_L = -0.8,  # Move Left Arm further left
         y_base_L = 0.7,   # Raise Left Arm base
@@ -79,7 +110,7 @@ manipulator = MyDualArmManipulator(
 
 # --- 2. Initial State ---
 # Left Arm: Shoulder=45deg, Elbow=-90deg
-q_L = jnp.array([-90*jnp.pi/180, 90*jnp.pi/180, 10*jnp.pi/180]) 
+q_L = jnp.array([-90*jnp.pi/180, 90*jnp.pi/180, 0*jnp.pi/180]) 
 
 # Right Arm: Shoulder=135deg, Elbow=90deg
 q_R = jnp.array([( 90 - 180 )*jnp.pi/180, -90*jnp.pi/180, 180*jnp.pi/180]) 
@@ -168,34 +199,51 @@ def run_simulation():
     uk_val = np.zeros(6) # Joint Torques
     ddqdt_val = np.zeros(9)
     lambda_val = np.zeros(8)
-    x_box_target = manipulator.box_target_state
-    print(f"Starting simulation... Target Y={x_box_target[1]}")
+    
+    # Initialize dynamic target
+    current_target = x_box_target_init
+    
+    print(f"Starting simulation... Initial Target Y={current_target[1]}")
 
     for k in range(N_sim):
         # Extract state components
         q = x_current[0:manipulator.n_q]
         v = x_current[manipulator.n_q:]
         x_box = jnp.hstack([q[6:], v[6:]])
-        if tspan_sim[k] >= 3.0:
-            x_box_target = jnp.array([0.0, 0.8, 0.0, 0.0, 0.0, 0.0])
-            manipulator.box_target_state = x_box_target
+        u_PD = manipulator._PD_controller(q, v)
+        
+        # --- Dynamic Target Logic ---
+        if tspan_sim[k] >= 3.0 and tspan_sim[k] < 5.0:
+            # Change target to: x=0, y=0.8, phi=0 (Upright lift)
+            current_target = jnp.array([0.0, 1.4, 0.0, 0.0, 0.0, 0.0])
+            # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
+            manipulator.box_target_state = current_target 
+        elif tspan_sim[k] >= 5.0:
+            current_target = jnp.array([-0.2, 0.3, 0.0, 0.0, 0.0, 0.0])
+            # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
+            manipulator.box_target_state = current_target 
+        else:
+             current_target = x_box_target_init
+
         # Control Logic
         if k % control_ratio == 0:
             # 1. Check if Arms are close enough to apply force
-            # (In a real scenario, we might have a 'MoveToContact' phase)
-            # Here we assume the MPC handles the high level, and CasADi handles the rest.
-            
             g_N = manipulator._gap_function(x_current[:manipulator.n_q])
+            # g_N = manipulator_sim._gap_function(x_current[:manipulator.n_q])
             
-            # if g_N[0] <= 0.0 and g_N[1] <= 0.0 and g_N[2] <= 0.0 and g_N[3] <= 0.0:
-            # check if any of the EEs are in contact simultaneously on each side, i.e., at least one contact per EE
+            # Check if any of the EEs are in contact simultaneously on each side
             if (g_N[0] <= 0.0 or g_N[1] <= 0.0) and (g_N[2] <= 0.0 or g_N[3] <= 0.0):
-            # if (g_N[0] <= 0.0 and g_N[1] <= 0.0) and (g_N[2] <= 0.0 and g_N[3] <= 0.0):
+                
                 # 2. Solve High Level MPC (Box Trajectory)
-                # Returns desired box wrench (uk_box) and acceleration (ddqdt_box)
-                _, U_box_bar, ddqdt_box, _ = box_MPC_controller.optimize_trajectory(x_0=x_box)
+                # --- CHANGE: Passed x_target_current to MPC ---
+                _, U_box_bar, ddqdt_box, _ = box_MPC_controller.optimize_trajectory(
+                    x_0=x_box, 
+                    x_target_current=current_target
+                )
+                
                 uk_box = U_box_bar[:, 0]
-                print(f"Step {k}: MPC Box Wrench Ref: {uk_box}")
+                # print(f"Step {k}: MPC Box Wrench Ref: {uk_box}")
+                
                 # 3. Update Dynamics Matrices at current state
                 M = manipulator._mass_matrix(q)
                 W = manipulator._contact_jacobian(q)[:, 0:8]
@@ -207,7 +255,7 @@ def run_simulation():
                 # [W'  0   0 ] [tau] = [W_dot_T_v]
                 #              [lam]
                 A_dyn = jnp.block([[M, -S, -W], [W.T, jnp.zeros((8, 14))]])
-                b_dyn = jnp.hstack([h, -W_dot_T_v])
+                b_dyn = jnp.hstack([h + u_PD, -W_dot_T_v])
 
                 A_np = np.array(A_dyn)
                 b_np = np.array(b_dyn)
@@ -221,34 +269,32 @@ def run_simulation():
                     v=np.array(v),
                     u_prev_val=uk_val
                 )
+                
                 box_wrench = W[6:, :] @ lambda_val
-                d_wrench = box_wrench - uk_box
-                d_ddq_box = (C_static @ ddqdt_val) - ddqdt_box[:, 0]
-                # print acceleration and wrench errors
-                # print(f"Step {k}: Low Level Control Solved. Achieved Box Acc: {C_static @ ddqdt_val}, Acc Error: {d_ddq_box}")
-                # print(f"Step {k}: Low Level Control Solved. Achieved Box Wrench: {box_wrench}, Wrench Error: {d_wrench}")
-                # print(f"Step {k}: Low Level Control Applied. Joint Torques: {uk_val}, Contact Forces: {lambda_val}, Achieved Box Wrench: {box_wrench}")
+                # Debug prints (optional)
+                # d_wrench = box_wrench - uk_box
+                # print(f"Step {k}: Achieved Box Wrench: {box_wrench}")
 
         # Store History
-        uk = jnp.array(uk_val)
+        uk = jnp.array(uk_val) + u_PD[0:6] # Add PD component
         _lambda = jnp.array(lambda_val)
         
         U = U.at[:, k].set(uk)
         Lambdas = Lambdas.at[:, k].set(_lambda)
 
         # Integrate Dynamics
-        x_next = manipulator.f_fcn(x_current, uk)
+        x_next = manipulator_sim.f_fcn(x_current, uk)
         x_current = x_next
         X = X.at[:, k+1].set(x_current)
 
     print("Simulation complete.")
-    return tspan_sim, X, U, Lambdas
+    return tspan_sim, X, U, Lambdas, x_box_target_init
 
 # ==========================================
 # 4. Plotting & Animation
 # ==========================================
 if __name__ == "__main__":
-    tspan, X, U, Lambdas = run_simulation()
+    tspan, X, U, Lambdas, initial_target = run_simulation()
 
     # --- Plotting ---
     fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
@@ -257,9 +303,17 @@ if __name__ == "__main__":
     axs[0].plot(tspan, X[6, :], label='Box X')
     axs[0].plot(tspan, X[7, :], label='Box Y', linewidth=2)
     axs[0].plot(tspan, X[8, :], label='Box Phi')
-    axs[0].axhline(x_box_target[0], color='b', linestyle='--', label='Target X')
-    axs[0].axhline(x_box_target[1], color='k', linestyle='--', label='Target Y')
-    axs[0].axhline(x_box_target[2], color='r', linestyle='--', label='Target Phi')
+    
+    # Plot Initial Target Lines
+    axs[0].axhline(initial_target[0], color='b', linestyle='--', alpha=0.3, label='Init Target X')
+    axs[0].axhline(initial_target[1], color='k', linestyle='--', alpha=0.3, label='Init Target Y')
+    
+    # Plot Final Target Lines (active after t=3.0)
+    axs[0].axhline(0.0, color='b', linestyle='-', alpha=0.5, label='Final Target X')
+    axs[0].axhline(0.8, color='k', linestyle='-', alpha=0.5, label='Final Target Y')
+    
+    axs[0].axvline(x=3.0, color='r', linestyle=':', label='Target Switch')
+    
     axs[0].set_ylabel('Box Pos [m/rad]')
     axs[0].set_title('Box Trajectory')
     axs[0].legend()
@@ -275,20 +329,20 @@ if __name__ == "__main__":
     axs[1].grid(True)
 
     # 3. Contact Forces
-    # Only plotting Normal forces (odd indices in 0-7 range)
     force_labels = ['Up1', 'Low1', 'Up2', 'Low2']
     for i in range(4):
         idx = i*2 + 1
         axs[2].plot(tspan[:-1], Lambdas[idx, :], label=f'{force_labels[i]}_N')
     axs[2].set_ylabel('Normal Force [N]')
     axs[2].set_xlabel('Time [s]')
-    
     axs[2].grid(True)
-    # plot tangent forces as well
+    
+    # Plot tangent forces
     for i in range(4):
         idx = i*2
-        axs[2].plot(tspan[:-1], Lambdas[idx, :], linestyle='--', label=f'{force_labels[i]}_T')
+        axs[2].plot(tspan[:-1], Lambdas[idx, :], linestyle='--', alpha=0.5, label=f'{force_labels[i]}_T')
     axs[2].legend()
+    
     plt.tight_layout()
     plt.show()
 
@@ -296,7 +350,7 @@ if __name__ == "__main__":
     try:
         from class_files.animations.animation_dual_arm_manipulator import AnimationDualArmBox
         print("\nPreparing Animation...")
-        anim = AnimationDualArmBox(manipulator, X, tspan, dt)
+        anim = AnimationDualArmBox(manipulator_sim, X, tspan, dt)
         anim.animate(save_video=False, filename='dual_arm_mpc.mp4')
     except ImportError:
         print("Animation class not found.")

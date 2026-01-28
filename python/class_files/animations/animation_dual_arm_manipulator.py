@@ -244,7 +244,7 @@ class AnimationDualArmBox:
         # Camera
         
         # 1. Position: Center X and Y at 0, move Z far out (e.g., 5.0)
-        camera.SetPosition(0, 0, 5.0) 
+        camera.SetPosition(0, 0.5, 5.0) 
         
         # 2. Focal Point: Look at the origin (center of your workspace)
         camera.SetFocalPoint(0, 0, 0) 
