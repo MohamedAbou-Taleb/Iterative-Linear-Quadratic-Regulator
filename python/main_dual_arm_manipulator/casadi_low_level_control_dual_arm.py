@@ -2,14 +2,16 @@ import casadi as ca
 import numpy as np
 
 class CasadiLowLevelControllerDualArm:
-    def __init__(self, manipulator, box_3DoF_MPC, Q_box_acc, R_box_force, R_tau, C, epsilon, tau_max=500.0):
+    def __init__(self, manipulator, box_3DoF_MPC, Q_box_acc, R_box_force, R_tau, C, epsilon, tau_max=500.0, lambda_N_min = 0.0):
         """
         Initializes the CasADi optimizer with Slacked Dynamics for the Dual Arm System.
         
         Args:
             tau_max: Maximum joint torque (Nm).
         """
-        self.opti = ca.Opti() 
+
+        self.lambda_N_min = lambda_N_min
+        self.opti = ca.Opti('conic') 
 
         # --- 1. Decision Variables ---
         # Acceleration (9): [q_L(3), q_R(3), q_Box(3)]
@@ -81,11 +83,11 @@ class CasadiLowLevelControllerDualArm:
         
         # Unilateral contact (Normal forces >= 0)
         # Odd indices are Normal forces in this convention
-        F_N = 10.0  # Large upper bound for normal forces
-        self.opti.subject_to(self.lam[1] >= F_N)  
-        self.opti.subject_to(self.lam[3] >= F_N)  
-        self.opti.subject_to(self.lam[5] >= F_N)  
-        self.opti.subject_to(self.lam[7] >= F_N) 
+        # Large upper bound for normal forces
+        self.opti.subject_to(self.lam[1] >= self.lambda_N_min)  
+        self.opti.subject_to(self.lam[3] >= self.lambda_N_min)  
+        self.opti.subject_to(self.lam[5] >= self.lambda_N_min)  
+        self.opti.subject_to(self.lam[7] >= self.lambda_N_min) 
 
         # Friction Cones (Coulomb Friction)
         # |Tangent| <= mu * Normal
@@ -112,13 +114,13 @@ class CasadiLowLevelControllerDualArm:
         self.opti.subject_to(self.tau <= tau_max)
         self.opti.subject_to(self.tau >= -tau_max)
 
-        # --- 6. Solver Settings ---
-        opts = {
-            'ipopt.print_level': 0, 
-            'print_time': 0, 
-            'ipopt.sb': 'yes'
-        }
-        self.opti.solver('ipopt', opts)
+       # --- 6. Solver Settings ---
+        opts = {'printLevel': 'none'} 
+        self.opti.solver('qpoases', opts)
+
+        # ALTERNATIVE: Use OSQP if installed (often faster for sparse problems)
+        # opts = {'verbose': False}
+        # self.opti.solver('osqp', opts)
 
     def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9), u_prev_val=np.zeros(6)):
         # Calculate Baungarte Stabilization for the constraint manifold
