@@ -344,6 +344,78 @@ class MyDualArmManipulator(System):
             "EE2": sys_lib.get_pos_EE2(*args),
             "box": sys_lib.get_pos_box(*args)
         }
+    
+    def inverse_kinematics_arms(self, target_pose_L, target_pose_R, q_guess, max_iter=50, tol=1e-4):
+        """
+        Solves Inverse Kinematics for both arms using Newton-Raphson method.
+        
+        Args:
+            target_pose_L (jnp.ndarray): Target [x, y, theta] for Left EE.
+            target_pose_R (jnp.ndarray): Target [x, y, theta] for Right EE.
+            q_guess (jnp.ndarray): Initial guess for full state q (size 9).
+            max_iter (int): Maximum iterations.
+            tol (float): Tolerance for convergence.
+            
+        Returns:
+            q_sol (jnp.ndarray): The solved joint configuration (size 9). 
+                                 (Box state q[6:9] is preserved from guess).
+            success (bool): True if converged.
+        """
+        q_curr = jnp.array(q_guess)
+        
+        # Helper to ensure orientation is between -pi and pi
+        def wrap_angle(angle):
+            return (angle + jnp.pi) % (2 * jnp.pi) - jnp.pi
+
+        for i in range(max_iter):
+            # 1. Compute Forward Kinematics for current q
+            args = self._get_dynamics_args(q_curr, jnp.zeros(self.n_v))
+            
+            # Left Arm FK
+            pos_L = sys_lib.get_pos_EE1(*args)
+            phi_L = q_curr[0] + q_curr[1] + q_curr[2]
+            current_pose_L = jnp.concatenate([pos_L, jnp.array([phi_L])])
+            
+            # Right Arm FK
+            pos_R = sys_lib.get_pos_EE2(*args)
+            phi_R = q_curr[3] + q_curr[4] + q_curr[5]
+            current_pose_R = jnp.concatenate([pos_R, jnp.array([phi_R])])
+            
+            # 2. Compute Errors
+            err_L = current_pose_L - target_pose_L
+            err_R = current_pose_R - target_pose_R
+            
+            # Wrap angle errors
+            err_L = err_L.at[2].set(wrap_angle(err_L[2]))
+            err_R = err_R.at[2].set(wrap_angle(err_R[2]))
+            
+            error_norm = jnp.linalg.norm(err_L) + jnp.linalg.norm(err_R)
+            if error_norm < tol:
+                return q_curr, True
+
+            # 3. Compute Jacobians
+            # The library provides position Jacobians (2x3). We append the orientation row [1, 1, 1].
+            J_pos_L, J_pos_R = self._end_effector_jacobians(q_curr)
+            
+            # Augmented Jacobian for Left Arm (3x3)
+            # Row 3 is [1, 1, 1] because phi = q0 + q1 + q2
+            J_L = jnp.vstack([J_pos_L[:, 0:3], jnp.array([1.0, 1.0, 1.0])])
+            
+            # Augmented Jacobian for Right Arm (3x3)
+            J_R = jnp.vstack([J_pos_R[:, 3:6], jnp.array([1.0, 1.0, 1.0])])
+
+            # 4. Update Steps (Newton-Raphson: q_new = q - J_inv * err)
+            # Since these are 3x3 matrices, we can use simple solve or pinv
+            # Adding small damping (1e-6) for numerical stability near singularities
+            dq_L = jnp.linalg.pinv(J_L, rcond=1e-3) @ err_L
+            dq_R = jnp.linalg.pinv(J_R, rcond=1e-3) @ err_R
+            
+            # Update the arm segments of q (indices 0:3 and 3:6)
+            q_curr = q_curr.at[0:3].set(q_curr[0:3] - dq_L)
+            q_curr = q_curr.at[3:6].set(q_curr[3:6] - dq_R)
+            
+        print(f"IK Warning: Did not converge within {max_iter} iterations. Error: {error_norm:.4f}")
+        return q_curr, False
 
 
 if __name__ == "__main__":

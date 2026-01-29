@@ -73,7 +73,7 @@ manipulator = MyDualArmManipulator(
         integrator="moreau",
         w_box=w_box*1.0,
         h_box=h_box,
-        mu=mu,
+        mu=mu*1.0,
         m_EE=m_EE,
         theta_EE=theta_EE,
         m_box=m_box,
@@ -120,6 +120,13 @@ q_box = jnp.array([0.0, 1*manipulator.h_box/2, 0.0])
 
 q_0 = jnp.concatenate([q_L, q_R, q_box])
 v_0 = jnp.zeros(9)
+
+target_pose_L = jnp.array([ q_box[0] - 0.3, q_box[1] + 0.7, 0.0])  # x, y, phi
+target_pose_R = jnp.array([ q_box[0] + 0.3, q_box[1] - 0.1, 0.0])  # x, y, phi
+q_0, conv = manipulator.inverse_kinematics_arms(target_pose_L, target_pose_R, q_0, max_iter=50, tol=1e-4)
+if not conv:
+    print("Warning: Initial IK did not converge.")
+
 x_0 = jnp.concatenate([q_0, v_0])
 
 
