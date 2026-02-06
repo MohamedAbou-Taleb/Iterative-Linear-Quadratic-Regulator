@@ -2,14 +2,14 @@ import casadi as ca
 import numpy as np
 
 class CasadiLowLevelControllerDualArm:
-    def __init__(self, manipulator, box_3DoF_MPC, Q_box_acc, R_box_force, R_tau, C, epsilon, tau_max=500.0, lambda_N_min = 0.0):
+    def __init__(self, manipulator, box_3DoF_MPC, Q_box_acc, R_box_force, R_tau, C, epsilon, tau_max=500.0, lambda_N_min = 0.0, w_smooth=0.0):
         """
         Initializes the CasADi optimizer with Slacked Dynamics for the Dual Arm System.
         
         Args:
             tau_max: Maximum joint torque (Nm).
         """
-
+        self.tau_max = tau_max
         self.lambda_N_min = lambda_N_min
         self.opti = ca.Opti('conic') 
 
@@ -56,8 +56,6 @@ class CasadiLowLevelControllerDualArm:
 
         # Weight for dynamics violation (Soft Physics)
         W_defect = 1e6 
-
-        w_smooth = 0.0 # Smoothing weight for joint torques
         
         # Build Objective
         J = 0.5 * (
@@ -111,9 +109,11 @@ class CasadiLowLevelControllerDualArm:
         self.opti.subject_to(manipulator.mu[3] * self.lam[7] >= self.lam[6])
 
         # Torque limits
-        self.opti.subject_to(self.tau <= tau_max)
-        self.opti.subject_to(self.tau >= -tau_max)
-
+        self.u_PD_val = self.opti.parameter(6)
+        # self.opti.subject_to(self.tau + self.u_PD_val <= self.tau_max)
+        # self.opti.subject_to(self.tau + self.u_PD_val >= -self.tau_max)
+        self.opti.subject_to(self.tau <= self.tau_max)
+        self.opti.subject_to(self.tau >= -self.tau_max)
        # --- 6. Solver Settings ---
         opts = {'printLevel': 'none'} 
         self.opti.solver('qpoases', opts)
@@ -122,7 +122,7 @@ class CasadiLowLevelControllerDualArm:
         # opts = {'verbose': False}
         # self.opti.solver('osqp', opts)
 
-    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9), u_prev_val=np.zeros(6)):
+    def solve(self, u_box_ref_val, ddq_box_ref_val, A_val, b_val, v=np.zeros(9), u_prev_val=np.zeros(6), u_PD_val=np.zeros(6)):
         # Calculate Baungarte Stabilization for the constraint manifold
         # W corresponds to the top-right block of A related to Lambda
         # A structure: [M -S -W; W.T 0 0]
@@ -146,6 +146,7 @@ class CasadiLowLevelControllerDualArm:
         self.opti.set_value(self.D_matrix, W[6:, :])
 
         self.opti.set_value(self.u_prev, u_prev_val)
+        self.opti.set_value(self.u_PD_val, u_PD_val)
         
         try:
             sol = self.opti.solve()

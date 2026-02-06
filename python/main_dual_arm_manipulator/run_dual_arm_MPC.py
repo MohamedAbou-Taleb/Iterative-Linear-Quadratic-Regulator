@@ -2,8 +2,10 @@ import time
 import numpy as np
 import jax
 import jax.numpy as jnp
+import jax.random as random
 import matplotlib.pyplot as plt
 import casadi as ca
+import scipy.linalg as la
 
 # --- Custom Imports ---
 from class_files.systems.dual_arm_manipulator_sys import MyDualArmManipulator
@@ -15,11 +17,14 @@ from casadi_low_level_control_dual_arm import CasadiLowLevelControllerDualArm
 # ==========================================
 # Time
 dt = 0.001
-dt_control = 0.01
+dt_control = 0.01 * 1  # Control at 100Hz
 control_ratio = int(dt_control / dt)
-T_horizon = 1.0
-T_sim = 4.0
+T_horizon = dt
+T_sim = 8.0
 
+# --- NEW: Switching Times ---
+T_switch_1 = 3.0
+T_switch_2 = 5.0
 # Dimensions (Must match system definition)
 w_box = 0.4
 h_box = 0.4
@@ -28,10 +33,27 @@ h_box = 0.4
 # State: [x, y, phi, vx, vy, vphi]
 
 # MPC Weights
-Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 400.0, 30.0, 30.0, 30.0]))           
-R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*1e-1
-Q_f_mpc = Q_mpc * 10.0
-
+# Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 400.0, 30.0, 30.0, 30.0]))           
+# R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*1
+Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 100.0, 30.0, 30.0, 30.0]))           
+R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*10
+# Q_f_mpc = Q_mpc * 10.0
+A = jnp.array([[0, 0, 0, 1, 0, 0],
+               [0, 0, 0, 0, 1, 0],
+               [0, 0, 0, 0, 0, 1],
+               [0, 0, 0, 0, 0, 0],
+               [0, 0, 0, 0, 0, 0],
+               [0, 0, 0, 0, 0, 0]])
+B = jnp.array([[0, 0, 0],
+               [0, 0, 0],
+               [0, 0, 0],
+               [1, 0, 0],
+               [0, 1, 0],
+               [0, 0, 1]])
+A_d = jnp.eye(6) + A * dt + 0.5 * (A @ A) * dt**2 + (1/6) * (A @ A @ A) * dt**3 + (1/24) * (A @ A @ A @ A) * dt**4
+B_d = B * dt + 0.5 * (A @ B) * dt**2 + (1/6) * (A @ A @ B) * dt**3 + (1/24) * (A @ A @ A @ B) * dt**4
+# Discrete-time LQR solution for terminal weight
+Q_f_mpc = la.solve_discrete_are(A_d, B_d, Q_mpc, R_mpc, None, None)
 # Low Level Controller Weights
 Q_box_acc = jnp.diag(jnp.array([10.0, 100.0, 10.0]))
 R_box_force = jnp.diag(jnp.array([0.1, 0.1, 0.1]))*1        
@@ -76,7 +98,7 @@ manipulator = MyDualArmManipulator(
         mu=mu*1.0,
         m_EE=m_EE,
         theta_EE=theta_EE,
-        m_box=m_box,
+        m_box=m_box*1.0,
         theta_box=theta_box,
         # --- Specify Base Positions Here ---
         x_base_L = -0.8,  # Move Left Arm further left
@@ -121,7 +143,7 @@ q_box = jnp.array([0.0, 1*manipulator.h_box/2, 0.0])
 q_0 = jnp.concatenate([q_L, q_R, q_box])
 v_0 = jnp.zeros(9)
 
-target_pose_L = jnp.array([ q_box[0] - 0.3, q_box[1] + 0.7, 0.0])  # x, y, phi
+target_pose_L = jnp.array([ q_box[0] - 0.3, q_box[1] + 0.2, 0.0])  # x, y, phi
 target_pose_R = jnp.array([ q_box[0] + 0.3, q_box[1] - 0.1, 0.0])  # x, y, phi
 q_0, conv = manipulator.inverse_kinematics_arms(target_pose_L, target_pose_R, q_0, max_iter=50, tol=1e-4)
 if not conv:
@@ -173,7 +195,7 @@ C_static = jnp.hstack([jnp.zeros((3, 6)), jnp.eye(3, 3)]) # Extracts box acc
 # Convert to numpy for Casadi
 A_np = np.array(A_static)
 b_np = np.array(b_static)
-
+tau_max = np.array([50.0, 30.0, 10.0, 50.0, 30.0, 10.0])*1.0
 # --- Casadi Low Level Controller ---
 casadi_controller = CasadiLowLevelControllerDualArm(
     manipulator=manipulator,
@@ -183,9 +205,9 @@ casadi_controller = CasadiLowLevelControllerDualArm(
     R_tau=R_tau,
     C=C_static,
     epsilon=epsilon,
-    tau_max=np.array([50.0, 30.0, 10.0, 50.0, 30.0, 10.0]),
-    lambda_N_min = 0.0
-    # tau_max=500.0 # Nm
+    tau_max=tau_max,
+    lambda_N_min = 0.0,
+    w_smooth=500.0
 )
 
 # ==========================================
@@ -203,6 +225,11 @@ def run_simulation():
     x_current = x_0
     X = X.at[:, 0].set(x_current)
 
+    X_noisy = jnp.zeros_like(X) # For storing noisy measurements (optional)
+    X_noisy = X_noisy.at[:, 0].set(x_current) # Initialize with true state (no noise at t=0)
+    X_filtered = jnp.zeros_like(X) # For storing filtered state estimates (optional)
+    X_filtered = X_filtered.at[:, 0].set(x_current) # Initialize with true state (no noise at t=0)
+
     # Loop Variables
     uk_box = jnp.array([0.0, 0.0, 0.0]) # Box Wrench Ref
     uk_val = np.zeros(6) # Joint Torques
@@ -211,23 +238,66 @@ def run_simulation():
     
     # Initialize dynamic target
     current_target = x_box_target_init
-    
+    key = random.PRNGKey(0)
+
+    # Define Covariance Matrices (Variance of 0.01^2 = 0.0001)
+    # cov_q = jnp.eye(manipulator.n_q) * ((3*jnp.pi/180)**2)
+    # cov_v = jnp.eye(manipulator.n_v) * ((3*jnp.pi/180)**2)
+    # --- Budget Sensor Noise Profile ---
+# Arms (High-res encoders but cheap processing)
+    sigma_q_arm = jnp.deg2rad(0.1)   # 0.1 degree
+    sigma_v_arm = 0.08              # Noticeable velocity noise
+
+    # Box (Vision-based tracking at ~30-60Hz)
+    sigma_q_box_xy = 0.015          # 1.5 cm jitter
+    sigma_q_box_phi = jnp.deg2rad(3.0) # 3 degrees jitter (vision is noisy here)
+    # sigma_q_box_xy = 0.003          # 1.5 cm jitter
+    # sigma_q_box_phi = jnp.deg2rad(3.0) # 3 degrees jitter (vision is noisy here)
+
+    # Box Velocity (Calculated via finite difference - VERY noisy)
+    sigma_v_box_xy = 0.2            # 20 cm/s noise
+    sigma_v_box_phi = 0.2           # High angular velocity noise
+
+    # Constructing the matrices
+    q_vars = jnp.array([sigma_q_arm]*6 + [sigma_q_box_xy, sigma_q_box_xy, sigma_q_box_phi])**2
+    v_vars = jnp.array([sigma_v_arm]*6 + [sigma_v_box_xy, sigma_v_box_xy, sigma_v_box_phi])**2
+
+    cov_q = jnp.diag(q_vars)
+    cov_v = jnp.diag(v_vars)
+
+    alpha_q_filter = 0.5  # Smoothing factor for low-pass filter (optional)
+    alpha_v_filter = 0.25
+    q_filtered = x_current[0:manipulator.n_q]
+    v_filtered = x_current[manipulator.n_q:]
     print(f"Starting simulation... Initial Target Y={current_target[1]}")
 
     for k in range(N_sim):
         # Extract state components
+        key, subkey = random.split(key)
         q = x_current[0:manipulator.n_q]
         v = x_current[manipulator.n_q:]
-        x_box = jnp.hstack([q[6:], v[6:]])
-        u_PD = manipulator._PD_controller(q, v)
-        
+        key_q, key_v = random.split(subkey)
+        q_noise = random.multivariate_normal(key_q, jnp.zeros(manipulator.n_q), cov_q)
+        v_noise = random.multivariate_normal(key_v, jnp.zeros(manipulator.n_v), cov_v)
+        q_measured = q + q_noise
+        v_measured = v + v_noise
+        if k > 0:
+            q_filtered = alpha_q_filter * q_measured + (1 - alpha_q_filter) * X_filtered[0:manipulator.n_q, k-1]
+            v_filtered = alpha_v_filter * v_measured + (1 - alpha_v_filter) * X_filtered[manipulator.n_q:, k-1]
+        X_filtered = X_filtered.at[:, k].set(jnp.concatenate([q_filtered, v_filtered]))
+        X_noisy = X_noisy.at[:, k].set(jnp.concatenate([q_measured, v_measured]))
+        # x_box = jnp.hstack([q[6:], v[6:]])
+        # x_box = jnp.hstack([q_measured[6:9], v_measured[6:9]])
+        x_box = jnp.hstack([q_filtered[6:9], v_filtered[6:9]])
+        # u_PD = manipulator._PD_controller(q, v)
+        # u_PD_val = np.array(u_PD[0:6])
         # --- Dynamic Target Logic ---
-        if tspan_sim[k] >= 3.0 and tspan_sim[k] < 5.0:
+        if tspan_sim[k] >= T_switch_1 and tspan_sim[k] < T_switch_2:
             # Change target to: x=0, y=0.8, phi=0 (Upright lift)
             current_target = jnp.array([0.0, 1.4, 0.0, 0.0, 0.0, 0.0])
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
-        elif tspan_sim[k] >= 5.0:
+        elif tspan_sim[k] >= T_switch_2:
             current_target = jnp.array([-0.2, 0.3, 0.0, 0.0, 0.0, 0.0])
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
@@ -236,9 +306,14 @@ def run_simulation():
 
         # Control Logic
         if k % control_ratio == 0:
+            # u_PD = manipulator._PD_controller(q, v)
+            # u_PD = manipulator._PD_controller(q_measured, v_measured)
+            u_PD = manipulator._PD_controller(q_filtered, v_filtered)
+            u_PD_val = np.array(u_PD[0:6])
             # 1. Check if Arms are close enough to apply force
-            g_N = manipulator._gap_function(x_current[:manipulator.n_q])
-            # g_N = manipulator_sim._gap_function(x_current[:manipulator.n_q])
+            # g_N = manipulator._gap_function(x_current[:manipulator.n_q])
+            g_N = manipulator_sim._gap_function(x_current[:manipulator.n_q])
+            # g_N = manipulator_sim._gap_function(q_measured) # Use measured state for gap function   
             
             # Check if any of the EEs are in contact simultaneously on each side
             if (g_N[0] <= 0.0 or g_N[1] <= 0.0) and (g_N[2] <= 0.0 or g_N[3] <= 0.0):
@@ -265,6 +340,8 @@ def run_simulation():
                 #              [lam]
                 A_dyn = jnp.block([[M, -S, -W], [W.T, jnp.zeros((8, 14))]])
                 b_dyn = jnp.hstack([h + u_PD, -W_dot_T_v])
+                # b_dyn = jnp.hstack([h, -W_dot_T_v])
+
 
                 A_np = np.array(A_dyn)
                 b_np = np.array(b_dyn)
@@ -276,16 +353,32 @@ def run_simulation():
                     A_val=A_np, 
                     b_val=b_np,
                     v=np.array(v),
-                    u_prev_val=uk_val
+                    u_prev_val=uk_val,
+                    u_PD_val=u_PD_val
                 )
-                
-                box_wrench = W[6:, :] @ lambda_val
+                # print the torque
+                # print(f"Step {k}: Low Level Joint Torques: {uk_val + u_PD[0:6]}")
+                # box_wrench = W[6:, :] @ lambda_val
                 # Debug prints (optional)
                 # d_wrench = box_wrench - uk_box
                 # print(f"Step {k}: Achieved Box Wrench: {box_wrench}")
+            #     uk = jnp.array(uk_val)
+            # else:
+            #     uk = jnp.array(u_PD_val)
 
         # Store History
-        uk = jnp.array(uk_val) + u_PD[0:6] # Add PD component
+        uk = jnp.array(uk_val) + u_PD_val[0:6] # Add PD component
+        # saturate torques (safety)
+        uk = jnp.clip(uk, -tau_max, tau_max)
+
+        # smooth the control input
+        # alpha = 0.1
+        alpha = 1.0
+
+        # if k % control_ratio == 0 and k > 0:
+        uk = alpha * uk + (1 - alpha) * U[:, k-1]
+
+
         _lambda = jnp.array(lambda_val)
         
         U = U.at[:, k].set(uk)
@@ -297,61 +390,134 @@ def run_simulation():
         X = X.at[:, k+1].set(x_current)
 
     print("Simulation complete.")
-    return tspan_sim, X, U, Lambdas, x_box_target_init
+    return tspan_sim, X, U, Lambdas, x_box_target_init, X_noisy, X_filtered
 
 # ==========================================
 # 4. Plotting & Animation
 # ==========================================
 if __name__ == "__main__":
-    tspan, X, U, Lambdas, initial_target = run_simulation()
+    tspan, X, U, Lambdas, initial_target, X_noisy, X_filtered = run_simulation()
+
+    # --- Construct Reference Trajectories for Plotting ---
+    ref_x_traj = np.zeros_like(tspan)
+    ref_y_traj = np.zeros_like(tspan)
+    ref_phi_traj = np.zeros_like(tspan)
+
+    # 1. Initial Target (t < T_switch_1)
+    mask1 = tspan < T_switch_1
+    ref_x_traj[mask1] = initial_target[0]
+    ref_y_traj[mask1] = initial_target[1]
+    ref_phi_traj[mask1] = initial_target[2]
+
+    # 2. Second Target (T_switch_1 <= t < T_switch_2)
+    mask2 = (tspan >= T_switch_1) & (tspan < T_switch_2)
+    ref_x_traj[mask2] = 0.0
+    ref_y_traj[mask2] = 1.4
+    ref_phi_traj[mask2] = 0.0
+
+    # 3. Third Target (t >= T_switch_2)
+    mask3 = tspan >= T_switch_2
+    ref_x_traj[mask3] = -0.2
+    ref_y_traj[mask3] = 0.3
+    ref_phi_traj[mask3] = 0.0
 
     # --- Plotting ---
-    fig, axs = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+    fig, axs = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
 
-    # 1. Box State
-    axs[0].plot(tspan, X[6, :], label='Box X')
-    axs[0].plot(tspan, X[7, :], label='Box Y', linewidth=2)
-    axs[0].plot(tspan, X[8, :], label='Box Phi')
+    # 1. Box State vs Reference
+    axs[0].plot(tspan, X[6, :], color='tab:blue', label='Box X')
+    axs[0].plot(tspan, ref_x_traj, color='tab:blue', linestyle='--', alpha=0.7, label='Ref X')
     
-    # Plot Initial Target Lines
-    axs[0].axhline(initial_target[0], color='b', linestyle='--', alpha=0.3, label='Init Target X')
-    axs[0].axhline(initial_target[1], color='k', linestyle='--', alpha=0.3, label='Init Target Y')
+    axs[0].plot(tspan, X[7, :], color='tab:orange', linewidth=2, label='Box Y')
+    axs[0].plot(tspan, ref_y_traj, color='tab:orange', linestyle='--', alpha=0.7, label='Ref Y')
     
-    # Plot Final Target Lines (active after t=3.0)
-    axs[0].axhline(0.0, color='b', linestyle='-', alpha=0.5, label='Final Target X')
-    axs[0].axhline(0.8, color='k', linestyle='-', alpha=0.5, label='Final Target Y')
+    axs[0].plot(tspan, X[8, :], color='tab:green', label='Box Phi')
+    axs[0].plot(tspan, ref_phi_traj, color='tab:green', linestyle='--', alpha=0.7, label='Ref Phi')
+
+    # Mark the switching times using variables
+    axs[0].axvline(x=T_switch_1, color='k', linestyle=':', alpha=0.3)
+    axs[0].axvline(x=T_switch_2, color='k', linestyle=':', alpha=0.3)
     
-    axs[0].axvline(x=3.0, color='r', linestyle=':', label='Target Switch')
-    
-    axs[0].set_ylabel('Box Pos [m/rad]')
-    axs[0].set_title('Box Trajectory')
-    axs[0].legend()
+    axs[0].set_ylabel('Box State')
+    axs[0].set_title('Box Trajectory Tracking')
+    axs[0].legend(loc='upper left', ncol=3)
     axs[0].grid(True)
 
     # 2. Joint Torques
-    labels_u = ['L_S', 'L_E', 'L_W', 'R_S', 'R_E', 'R_W']
+    labels_u = ['tau_1', 'tau_2', 'tau_3', 'tau_4', 'tau_5', 'tau_6']
+    colors = plt.cm.tab10(np.linspace(0, 1, 6))
     for i in range(6):
-        axs[1].plot(tspan[:-1], U[i, :], label=labels_u[i])
+        axs[1].plot(tspan[:-1], U[i, :], label=labels_u[i], color=colors[i])
     axs[1].set_ylabel('Torque [Nm]')
     axs[1].set_title('Joint Torques')
-    axs[1].legend(ncol=6, fontsize='small')
+    axs[1].legend(ncol=6, fontsize='small', loc='lower right')
     axs[1].grid(True)
 
     # 3. Contact Forces
     force_labels = ['Up1', 'Low1', 'Up2', 'Low2']
+    colors_f = plt.cm.Set1(np.linspace(0, 1, 4))
+    
     for i in range(4):
-        idx = i*2 + 1
-        axs[2].plot(tspan[:-1], Lambdas[idx, :], label=f'{force_labels[i]}_N')
-    axs[2].set_ylabel('Normal Force [N]')
+        idx_n = i*2 + 1
+        idx_t = i*2    
+        axs[2].plot(tspan[:-1], Lambdas[idx_n, :], color=colors_f[i], label=f'{force_labels[i]}_N')
+        axs[2].plot(tspan[:-1], Lambdas[idx_t, :], color=colors_f[i], linestyle='--', alpha=0.4)
+
+    axs[2].set_ylabel('Contact Forces [N]')
     axs[2].set_xlabel('Time [s]')
+    axs[2].set_title('Contact Forces (Solid: Normal, Dashed: Tangent)')
+    axs[2].legend(ncol=4, fontsize='small')
     axs[2].grid(True)
     
-    # Plot tangent forces
-    for i in range(4):
-        idx = i*2
-        axs[2].plot(tspan[:-1], Lambdas[idx, :], linestyle='--', alpha=0.5, label=f'{force_labels[i]}_T')
-    axs[2].legend()
-    
+    plt.tight_layout()
+    # plt.show()
+
+    # create a plot that compares the real trajectory vs the noisy measurements for all states
+    # compare the filtered state as well to show the effect of the low-pass filter
+    fig2, axs2 = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    state_labels = ['X Position', 'Y Position', 'Phi (Orientation)']
+    for i in range(3):
+        axs2[i].plot(tspan, X[6+i, :], label='True State', color='tab:blue')
+        axs2[i].plot(tspan, X_noisy[6+i, :], label='Noisy Measurement', color='tab:orange', alpha=0.7)
+        axs2[i].plot(tspan, X_filtered[6+i, :], label='Filtered Estimate', color='tab:green', alpha=0.7)
+        axs2[i].set_ylabel(state_labels[i])
+        axs2[i].legend()
+        axs2[i].grid(True)
+    axs2[2].set_xlabel('Time [s]')
+    plt.tight_layout()
+
+    # For the box velocities as well
+    fig2b, axs2b = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
+    velocity_labels = ['X Velocity', 'Y Velocity', 'Angular Velocity']
+    for i in range(3):
+        axs2b[i].plot(tspan, X[9+i, :], label='True Velocity', color='tab:green')
+        axs2b[i].plot(tspan, X_noisy[9+i, :], label='Noisy Measurement', color='tab:red', alpha=0.7)
+        axs2b[i].plot(tspan, X_filtered[9+i, :], label='Filtered Estimate', color='tab:purple', alpha=0.7)
+        axs2b[i].set_ylabel(velocity_labels[i])
+        axs2b[i].legend()
+        axs2b[i].grid(True)
+    axs2b[2].set_xlabel('Time [s]')
+    plt.tight_layout()
+
+
+    # create a plot that compares the real trajectory vs the noisy measurements for the first 6 states (joint angles) and the next 6 states (joint velocities)
+    fig3, axs3 = plt.subplots(2, 1, figsize=(8, 9), sharex=True)
+    for i in range(6):
+        axs3[0].plot(tspan, X[i, :], label=f'Joint {i+1} Angle', color=plt.cm.tab10(i))
+        axs3[0].plot(tspan, X_noisy[i, :], label=f'Joint {i+1} Angle Noisy', color=plt.cm.tab10(i), alpha=0.7)
+        # filtered state for joint angles
+        axs3[0].plot(tspan, X_filtered[i, :], label=f'Joint {i+1} Angle Filtered', color=plt.cm.tab10(i), linestyle='--', alpha=0.7)
+        axs3[1].plot(tspan, X[manipulator.n_q + i, :], label=f'Joint {i+1} Velocity', color=plt.cm.tab10(i))
+        axs3[1].plot(tspan, X_noisy[manipulator.n_q + i, :], label=f'Joint {i+1} Velocity Noisy', color=plt.cm.tab10(i), alpha=0.7)
+        # filtered state for joint velocities
+        axs3[1].plot(tspan, X_filtered[manipulator.n_q + i, :], label=f'Joint {i+1} Velocity Filtered', color=plt.cm.tab10(i), linestyle='--', alpha=0.7)
+        axs3[0].grid(True)
+        axs3[1].grid(True)
+    axs3[0].set_ylabel('Joint Angles [rad]')
+    axs3[1].set_ylabel('Joint Velocities [rad/s]')
+    axs3[1].set_xlabel('Time [s]')
+    axs3[0].legend(loc='upper right', fontsize='small')
+    axs3[1].legend(loc='upper right', fontsize='small')
     plt.tight_layout()
     plt.show()
 
@@ -360,6 +526,6 @@ if __name__ == "__main__":
         from class_files.animations.animation_dual_arm_manipulator import AnimationDualArmBox
         print("\nPreparing Animation...")
         anim = AnimationDualArmBox(manipulator_sim, X, tspan, dt)
-        anim.animate(save_video=False, filename='dual_arm_mpc.mp4')
+        anim.animate(save_video=False, filename='dual_arm_mpc_box_leighter_than_expected.mp4')
     except ImportError:
         print("Animation class not found.")

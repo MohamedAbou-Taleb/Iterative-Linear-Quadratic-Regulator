@@ -250,23 +250,33 @@ class MyDualArmManipulator(System):
         # Kd_lin = 5.0
         # Kd_ang = 2.0
 
-        Kp_pos_x = 100.0
-        Kp_pos_y = 500.0
-        Kp_ang = 20.0
-        Kd_lin_x = 10.0
-        Kd_lin_y = 30.0
-        Kd_ang = 2.0
+        # Kp_pos_x = 100.0
+        # Kp_pos_y = 500.0
         
+        # Kd_lin_x = 10.0
+        # Kd_lin_y = 30.0
+        # Kp_ang = 20.0
+        # Kd_ang = 2.0
+
+        Kp_pos_x = 20.0
+        Kp_pos_y = 40.0
+        Kd_lin_x = 5.0
+        Kd_lin_y = 10.0
+        Kp_ang = 5.0
+        Kd_ang = 2.0    
+
+
 
         # Desired offsets relative to box center (approximate grasping)
         # EE1 (Left)
         pen_factor = 0.99
-        des_x1 = q[6] - self.w_box/2 - self.w_EE/2 *pen_factor # Slightly to the left
+        box_pen_factor = 0.7
+        des_x1 = q[6] - box_pen_factor*self.w_box/2 - self.w_EE/2 *pen_factor # Slightly to the left
         des_y1 = q[7]
         des_phi1 = q[8]
         
         # EE2 (Right)
-        des_x2 = q[6] + self.w_box/2 + self.w_EE/2 *pen_factor # Slightly to the right
+        des_x2 = q[6] + box_pen_factor*self.w_box/2 + self.w_EE/2 *pen_factor # Slightly to the right
         des_y2 = q[7]
         # I_r_OP1_des = I_r_Obox + A_IB_box @ jnp.array([-self.w_box/2*0.95, 0.0])
         # I_r_OP2_des = I_r_Obox + A_IB_box @ jnp.array([ self.w_box/2*0.95, 0.0])
