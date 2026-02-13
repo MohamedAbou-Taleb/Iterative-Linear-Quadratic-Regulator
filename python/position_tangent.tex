@@ -1,0 +1,91 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+% --- Essential Packages ---
+\usepackage{subcaption} % For \subcaption
+\usepackage{pgfplots}   % Main plotting engine
+\pgfplotsset{compat=1.18} 
+\usepackage{tikz}
+\usepgfplotslibrary{external}
+\tikzexternalize[prefix=figures/] % All generated PDFs will go here
+% --- Externalization (Optional but used in your code) ---
+% This speeds up compilation by saving plots as PDFs. 
+% You must create a folder named 'cubic_hermite' or remove the \tikzsetnextfilename lines.
+\usetikzlibrary{pgfplots.external}
+%\tikzexternalize % Uncomment this to enable externalization
+
+% --- Define custom colors ---
+% Your code uses 'pt_bright_...' colors. Here are standard definitions:
+\definecolor{pt_bright_red}{RGB}{230, 97, 74}
+\definecolor{pt_bright_green}{RGB}{94, 201, 98}
+\definecolor{pt_bright_blue}{RGB}{74, 144, 226}
+
+% --- Math Commands ---
+% Your legend uses \vr and \vt, which aren't standard. 
+% We'll define them as bold vectors here:
+\newcommand{\vr}{\mathbf{r}}
+\newcommand{\vt}{\mathbf{t}}
+
+\begin{document}
+	
+	\newcommand{\plotPath}{results.csv}
+	
+	\begin{figure}[!b]
+		\centering
+		\begin{minipage}[t]{0.48\textwidth}\centering
+			\subcaption{Position}
+			% \tikzsetnextfilename{cubic_hermite/position} % Requires 'cubic_hermite' folder
+			\begin{tikzpicture}
+				\begin{axis}[
+					height=0.25\textheight,
+					width=\textwidth,
+					xlabel=$s$,
+					grid=major,
+					ymin=-0.9,
+					ymax= 1.9,
+					legend style={at={(0,1)}, anchor=north west, font=\tiny},
+					]
+					\addplot[black, solid] table [x=s, y=r_OP_x, col sep=comma] {\plotPath};
+					\addplot[green, solid] table [x=s, y=r_OP_y, col sep=comma] {\plotPath};
+					\addplot[blue, solid]  table [x=s, y=r_OP_z, col sep=comma] {\plotPath};
+					
+					\addlegendentry{${}_I \vr_{OP_x}$}
+					\addlegendentry{${}_I \vr_{OP_y}$}
+					\addlegendentry{${}_I \vr_{OP_z}$}
+				\end{axis}
+			\end{tikzpicture}
+		\end{minipage}\hfill
+		\begin{minipage}[t]{0.48\textwidth}\centering
+			\subcaption{Tangent}
+			% \tikzsetnextfilename{cubic_hermite/tangent}
+			\begin{tikzpicture}
+				\begin{axis}[
+					height=0.25\textheight,
+					width=\textwidth,
+					xlabel=$s$,
+					grid=major,
+					ymin=-1.1,
+					ymax= 1.75,
+					legend style={at={(0,1)}, anchor=north west, font=\tiny},
+					]
+					\addplot[pt_bright_red, solid]   table [x=s, y=t_x, col sep=comma] {\plotPath};
+					\addplot[pt_bright_green, solid] table [x=s, y=t_y, col sep=comma] {\plotPath};
+					\addplot[pt_bright_blue, solid]  table [x=s, y=t_z, col sep=comma] {\plotPath};
+					
+					\addlegendentry{${}_I \vt_x$}
+					\addlegendentry{${}_I \vt_y$}
+					\addlegendentry{${}_I \vt_z$}
+				\end{axis}
+			\end{tikzpicture}
+		\end{minipage}
+		\caption{
+			Cubic Hermite interpolation with non-uniform elements: (a) components of the position ${}_I\vr_{OP}$ along the arclength~$s$, (b) components of the tangent vector ${}_I\vt = {}_I \vr_{OP}^\prime$.
+		}
+		\label{fig:hermite_interpolation}
+	\end{figure}
+	
+	\let\plotPath\undefined
+	
+\end{document}

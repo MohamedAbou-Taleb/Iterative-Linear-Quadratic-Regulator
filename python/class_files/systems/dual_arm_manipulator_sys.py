@@ -177,7 +177,8 @@ class MyDualArmManipulator(System):
         # 2. Subtract gravity from the total forces for the Arms (Indices 0:6)
         # f_total - f_static = (tau - C - G) - (-G) = tau - C
         # This removes gravity from the arm dynamics physically.
-        f_total = f_total.at[0:6].set(f_total[0:6] - f_static[0:6])
+        # f_total = f_total.at[0:6].set(f_total[0:6] - f_static[0:6])
+
         
         # 2. Add PD Controller (Optional Damping/Stabilization)
         # Note: If PD outputs torques, we should technically add B * u_PD.
@@ -304,8 +305,11 @@ class MyDualArmManipulator(System):
         f_2 = f_2.at[5].add(M_2)
         u_PD = f_1 + f_2
         # u_PD = jnp.concatenate([J_EE1.T @ F_1 + J_EE2.T @ F_2, jnp.zeros(3)])
-
+        args_static = self._get_dynamics_args(q, jnp.zeros_like(v), jnp.zeros(self.n_u))
+        f_static = sys_lib.get_gen_force(*args_static) 
+        u_PD = u_PD - jnp.hstack([f_static[0:6], jnp.array([0.0,0.0,0.0])]) # Gravity compensation for arms in PD control
         return u_PD
+    
 
     def _l_fcn(self, x, u):
         q = x[: self.n_q]

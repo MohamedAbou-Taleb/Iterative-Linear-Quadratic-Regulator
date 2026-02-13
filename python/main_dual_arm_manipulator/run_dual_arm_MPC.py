@@ -144,6 +144,10 @@ q_0 = jnp.concatenate([q_L, q_R, q_box])
 v_0 = jnp.zeros(9)
 
 target_pose_L = jnp.array([ q_box[0] - 0.3, q_box[1] + 0.2, 0.0])  # x, y, phi
+
+
+# target_pose_L = jnp.array([ q_box[0] - 0.6, q_box[1] + 0.4, 0.0])  # x, y, phi
+
 target_pose_R = jnp.array([ q_box[0] + 0.3, q_box[1] - 0.1, 0.0])  # x, y, phi
 q_0, conv = manipulator.inverse_kinematics_arms(target_pose_L, target_pose_R, q_0, max_iter=50, tol=1e-4)
 if not conv:
@@ -206,8 +210,8 @@ casadi_controller = CasadiLowLevelControllerDualArm(
     C=C_static,
     epsilon=epsilon,
     tau_max=tau_max,
-    lambda_N_min = 0.0,
-    w_smooth=500.0
+    lambda_N_min = 1.0,
+    w_smooth=500.0*0.0
 )
 
 # ==========================================
@@ -244,7 +248,7 @@ def run_simulation():
     # cov_q = jnp.eye(manipulator.n_q) * ((3*jnp.pi/180)**2)
     # cov_v = jnp.eye(manipulator.n_v) * ((3*jnp.pi/180)**2)
     # --- Budget Sensor Noise Profile ---
-# Arms (High-res encoders but cheap processing)
+    # Arms (High-res encoders but cheap processing)
     sigma_q_arm = jnp.deg2rad(0.1)   # 0.1 degree
     sigma_v_arm = 0.08              # Noticeable velocity noise
 
@@ -265,27 +269,82 @@ def run_simulation():
     cov_q = jnp.diag(q_vars)
     cov_v = jnp.diag(v_vars)
 
-    alpha_q_filter = 0.5  # Smoothing factor for low-pass filter (optional)
-    alpha_v_filter = 0.25
+    alpha_q_filter = 0.4/0.4  # Smoothing factor for low-pass filter (optional)
+    alpha_v_filter = 0.4/0.4
     q_filtered = x_current[0:manipulator.n_q]
     v_filtered = x_current[manipulator.n_q:]
     print(f"Starting simulation... Initial Target Y={current_target[1]}")
+    # --- Before the loop ---
+    dt_box_measurement = 0.05  # Box measurements every 50ms (20Hz)
+    dt_arm_measurement = 0.01  # Arm measurements every 10ms (100Hz)
+    # measurement_ratio_arm = int(dt_arm_measurement / dt)  # Number of sim steps per arm measurement
+    # measurement_ratio_box = int(dt_box_measurement / dt)  # Number of sim steps per box measurement
+    measurement_ratio_box = int(50/50)  # 100Hz control / 20Hz vision
+    measurement_ratio_arm = int(10/10)  # Arm measurements at every sim step (100Hz)
+
+    # measurement_ratio_box = 1  # 100Hz control / 20Hz vision
+
+    last_q_box_meas = x_current[6:9]
+    last_v_box_meas = x_current[15:18]
+
+    add_noise_to_box = False
+    add_noise_to_arms = False
+
+    target_2 = jnp.array([0.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+    target_3 = jnp.array([-0.2, 0.3, 0.0, 0.0, 0.0, 0.0])
 
     for k in range(N_sim):
-        # Extract state components
         key, subkey = random.split(key)
-        q = x_current[0:manipulator.n_q]
-        v = x_current[manipulator.n_q:]
-        key_q, key_v = random.split(subkey)
-        q_noise = random.multivariate_normal(key_q, jnp.zeros(manipulator.n_q), cov_q)
-        v_noise = random.multivariate_normal(key_v, jnp.zeros(manipulator.n_v), cov_v)
-        q_measured = q + q_noise
-        v_measured = v + v_noise
-        if k > 0:
-            q_filtered = alpha_q_filter * q_measured + (1 - alpha_q_filter) * X_filtered[0:manipulator.n_q, k-1]
-            v_filtered = alpha_v_filter * v_measured + (1 - alpha_v_filter) * X_filtered[manipulator.n_q:, k-1]
-        X_filtered = X_filtered.at[:, k].set(jnp.concatenate([q_filtered, v_filtered]))
+        q = x_current[0:9]
+        v = x_current[9:18]
+        
+        if k % measurement_ratio_arm == 0:
+            # 1. Arm Measurements (100Hz - Always new)
+            
+            if add_noise_to_arms:
+                q_arm_noise = random.multivariate_normal(subkey, jnp.zeros(6), cov_q[:6, :6])
+                v_arm_noise = random.multivariate_normal(subkey, jnp.zeros(6), cov_v[:6, :6])
+            else:
+                q_arm_noise = jnp.zeros(6)
+                v_arm_noise = jnp.zeros(6)
+            q_arm_meas = q[:6] + q_arm_noise
+            v_arm_meas = v[:6] + v_arm_noise
+
+        # 2. Box Measurements (20Hz - Conditional)
+        if k % measurement_ratio_box == 0:
+            # New vision frame arrives
+            if add_noise_to_box:
+                q_box_noise = random.multivariate_normal(subkey, jnp.zeros(3), cov_q[6:9, 6:9])
+                v_box_noise = random.multivariate_normal(subkey, jnp.zeros(3), cov_v[6:9, 6:9])
+            else:
+                q_box_noise = jnp.zeros(3)
+                v_box_noise = jnp.zeros(3)
+            last_q_box_meas = q[6:9] + q_box_noise
+            last_v_box_meas = v[6:9] + v_box_noise
+            
+            # UPDATE filter with real data
+            q_filtered = q_filtered.at[6:9].set(alpha_q_filter * last_q_box_meas + (1 - alpha_q_filter) * q_filtered[6:9])
+            v_filtered = v_filtered.at[6:9].set(alpha_v_filter * last_v_box_meas + (1 - alpha_v_filter) * v_filtered[6:9])
+        else:
+            # NO vision frame: PREDICT using MPC model
+            x_box_prev = jnp.concatenate([q_filtered[6:9], v_filtered[6:9]])
+            x_box_pred = A_d @ x_box_prev + B_d @ uk_box
+            
+            q_filtered = q_filtered.at[6:9].set(x_box_pred[:3])
+            v_filtered = v_filtered.at[6:9].set(x_box_pred[3:])
+
+        # 3. Always update Arm Filter
+        q_filtered = q_filtered.at[:6].set(alpha_q_filter * q_arm_meas + (1 - alpha_q_filter) * q_filtered[:6])
+        v_filtered = v_filtered.at[:6].set(alpha_v_filter * v_arm_meas + (1 - alpha_v_filter) * v_filtered[:6])
+
+        # 4. Reconstruct q_measured and v_measured for X_noisy
+        # This reflects the "stair-step" nature of the box sensor
+        q_measured = jnp.concatenate([q_arm_meas, last_q_box_meas])
+        v_measured = jnp.concatenate([v_arm_meas, last_v_box_meas])
+
+        # 5. Save everything
         X_noisy = X_noisy.at[:, k].set(jnp.concatenate([q_measured, v_measured]))
+        X_filtered = X_filtered.at[:, k].set(jnp.concatenate([q_filtered, v_filtered]))
         # x_box = jnp.hstack([q[6:], v[6:]])
         # x_box = jnp.hstack([q_measured[6:9], v_measured[6:9]])
         x_box = jnp.hstack([q_filtered[6:9], v_filtered[6:9]])
@@ -294,11 +353,11 @@ def run_simulation():
         # --- Dynamic Target Logic ---
         if tspan_sim[k] >= T_switch_1 and tspan_sim[k] < T_switch_2:
             # Change target to: x=0, y=0.8, phi=0 (Upright lift)
-            current_target = jnp.array([0.0, 1.4, 0.0, 0.0, 0.0, 0.0])
+            current_target = target_2
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
         elif tspan_sim[k] >= T_switch_2:
-            current_target = jnp.array([-0.2, 0.3, 0.0, 0.0, 0.0, 0.0])
+            current_target = target_3
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
         else:
@@ -329,10 +388,18 @@ def run_simulation():
                 # print(f"Step {k}: MPC Box Wrench Ref: {uk_box}")
                 
                 # 3. Update Dynamics Matrices at current state
-                M = manipulator._mass_matrix(q)
-                W = manipulator._contact_jacobian(q)[:, 0:8]
-                h = manipulator._generalized_forces(q, v, u0_dummy) # u=0 for h calculation
-                W_dot_T_v = manipulator._contact_jacobian_dot_transpose_dqdt(q, v)[0:8]
+                # M = manipulator._mass_matrix(q)
+                # W = manipulator._contact_jacobian(q)[:, 0:8]
+                # h = manipulator._generalized_forces(q, v, u0_dummy) # u=0 for h calculation
+                # W_dot_T_v = manipulator._contact_jacobian_dot_transpose_dqdt(q, v)[0:8]
+
+                M = manipulator._mass_matrix(q_filtered)
+                W = manipulator._contact_jacobian(q_filtered)[:, 0:8]
+                h = manipulator._generalized_forces(q_filtered, v_filtered, u0_dummy) # u=0 for h calculation
+                W_dot_T_v = manipulator._contact_jacobian_dot_transpose_dqdt(q_filtered, v_filtered)[0:8]
+
+
+                
                 
                 # Formulate Linear System for CasADi
                 # [M  -S  -W ] [ddq]   [h]
@@ -347,15 +414,26 @@ def run_simulation():
                 b_np = np.array(b_dyn)
 
                 # 4. Solve Low Level (Torque Allocation)
+                # ddqdt_val, uk_val, lambda_val = casadi_controller.solve(
+                #     u_box_ref_val=uk_box, 
+                #     ddq_box_ref_val=ddqdt_box[:, 0],
+                #     A_val=A_np, 
+                #     b_val=b_np,
+                #     v=np.array(v),
+                #     u_prev_val=uk_val,
+                #     u_PD_val=u_PD_val
+                # )
+
                 ddqdt_val, uk_val, lambda_val = casadi_controller.solve(
                     u_box_ref_val=uk_box, 
                     ddq_box_ref_val=ddqdt_box[:, 0],
                     A_val=A_np, 
                     b_val=b_np,
-                    v=np.array(v),
+                    v=np.array(v_filtered),
                     u_prev_val=uk_val,
                     u_PD_val=u_PD_val
                 )
+
                 # print the torque
                 # print(f"Step {k}: Low Level Joint Torques: {uk_val + u_PD[0:6]}")
                 # box_wrench = W[6:, :] @ lambda_val
@@ -390,14 +468,17 @@ def run_simulation():
         X = X.at[:, k+1].set(x_current)
 
     print("Simulation complete.")
-    return tspan_sim, X, U, Lambdas, x_box_target_init, X_noisy, X_filtered
+    targets = [x_box_target_init, target_2, target_3]
+    switching_times = [T_switch_1, T_switch_2]
+    return tspan_sim, X, U, Lambdas, x_box_target_init, X_noisy, X_filtered, targets, switching_times
 
 # ==========================================
 # 4. Plotting & Animation
 # ==========================================
 if __name__ == "__main__":
-    tspan, X, U, Lambdas, initial_target, X_noisy, X_filtered = run_simulation()
-
+    tspan, X, U, Lambdas, initial_target, X_noisy, X_filtered, targets, switching_times = run_simulation()
+    initial_target, target_2, target_3 = targets
+    T_switch_1, T_switch_2 = switching_times
     # --- Construct Reference Trajectories for Plotting ---
     ref_x_traj = np.zeros_like(tspan)
     ref_y_traj = np.zeros_like(tspan)
@@ -411,15 +492,15 @@ if __name__ == "__main__":
 
     # 2. Second Target (T_switch_1 <= t < T_switch_2)
     mask2 = (tspan >= T_switch_1) & (tspan < T_switch_2)
-    ref_x_traj[mask2] = 0.0
-    ref_y_traj[mask2] = 1.4
-    ref_phi_traj[mask2] = 0.0
+    ref_x_traj[mask2] = target_2[0]
+    ref_y_traj[mask2] = target_2[1]
+    ref_phi_traj[mask2] = target_2[2]
 
     # 3. Third Target (t >= T_switch_2)
     mask3 = tspan >= T_switch_2
-    ref_x_traj[mask3] = -0.2
-    ref_y_traj[mask3] = 0.3
-    ref_phi_traj[mask3] = 0.0
+    ref_x_traj[mask3] = target_3[0]
+    ref_y_traj[mask3] = target_3[1]
+    ref_phi_traj[mask3] = target_3[2]
 
     # --- Plotting ---
     fig, axs = plt.subplots(3, 1, figsize=(8, 9), sharex=True)
@@ -526,6 +607,6 @@ if __name__ == "__main__":
         from class_files.animations.animation_dual_arm_manipulator import AnimationDualArmBox
         print("\nPreparing Animation...")
         anim = AnimationDualArmBox(manipulator_sim, X, tspan, dt)
-        anim.animate(save_video=False, filename='dual_arm_mpc_box_leighter_than_expected.mp4')
+        anim.animate(save_video=False, filename='dual_arm_mpc_box_with_noise.mp4')
     except ImportError:
         print("Animation class not found.")
