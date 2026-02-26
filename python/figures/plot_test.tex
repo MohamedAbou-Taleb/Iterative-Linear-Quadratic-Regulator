@@ -1,0 +1,68 @@
+\documentclass{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+% --- Essential Packages ---
+\usepackage{subcaption} % For \subcaption
+\usepackage{pgfplots}   % Main plotting engine
+\pgfplotsset{compat=1.18} 
+\usepackage{tikz}
+% --- Unified Externalization Setup ---
+\usepgfplotslibrary{external}
+\tikzexternalize[prefix=tikz_cache/] 
+
+% Ensure the directory exists (only works on some systems, 
+% better to create the folder manually in your file tree)
+% --- Externalization (Optional but used in your code) ---
+% This speeds up compilation by saving plots as PDFs. 
+% You must create a folder named 'cubic_hermite' or remove the \tikzsetnextfilename lines.
+\usetikzlibrary{pgfplots.external}
+%\tikzexternalize % Uncomment this to enable externalization
+
+% --- Define custom colors ---
+% Your code uses 'pt_bright_...' colors. Here are standard definitions:
+\definecolor{pt_bright_red}{RGB}{230, 97, 74}
+\definecolor{pt_bright_green}{RGB}{94, 201, 98}
+\definecolor{pt_bright_blue}{RGB}{74, 144, 226}
+
+% --- Math Commands ---
+% Your legend uses \vr and \vt, which aren't standard. 
+% We'll define them as bold vectors here:
+\newcommand{\vr}{\mathbf{r}}
+\newcommand{\vt}{\mathbf{t}}
+
+\begin{document}
+	
+	\newcommand{\plotPath}{../main_dual_arm_manipulator/results.csv}
+	
+	\begin{figure}[!b]
+		\centering
+%		\begin{minipage}[t]{0.48\textwidth}\centering
+			\subcaption{Position}
+			% \tikzsetnextfilename{cubic_hermite/position} % Requires 'cubic_hermite' folder
+			\begin{tikzpicture}
+				\begin{axis}[
+					height=0.25\textheight,
+					width=\textwidth,
+					xlabel=$s$,
+					grid=major,
+					ymin=-0.9,
+					ymax= 1.9,
+					legend style={at={(0,1)}, anchor=north west, font=\tiny},
+					]
+					\addplot[black, solid,line width=1.5] table [x=t, y=r_obox_x, col sep=comma] {\plotPath};
+					\addplot[green, solid,line width=1.5] table [x=t, y=r_obox_y, col sep=comma] {\plotPath};
+					\addplot[blue, solid,line width=1.5]  table [x=t, y=r_obox_phi, col sep=comma] {\plotPath};
+					
+					\addlegendentry{${}_I \vr_{OP_x}$}
+					\addlegendentry{${}_I \vr_{OP_y}$}
+					\addlegendentry{${}_I \vr_{OP_z}$}
+				\end{axis}
+			\end{tikzpicture}
+%		\end{minipage}
+	\end{figure}
+	
+	\let\plotPath\undefined
+	
+\end{document}

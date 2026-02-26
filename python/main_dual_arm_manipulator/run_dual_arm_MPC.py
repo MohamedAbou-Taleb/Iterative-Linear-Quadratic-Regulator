@@ -12,6 +12,7 @@ from class_files.systems.dual_arm_manipulator_sys import MyDualArmManipulator
 from class_files.box_3DoF_MPC import SurfaceBoxMPC
 from casadi_low_level_control_dual_arm import CasadiLowLevelControllerDualArm
 
+from pathlib import Path
 # ==========================================
 # 1. Constants & Weights
 # ==========================================
@@ -20,11 +21,13 @@ dt = 0.001
 dt_control = 0.01 * 1  # Control at 100Hz
 control_ratio = int(dt_control / dt)
 T_horizon = dt
-T_sim = 8.0
+T_sim = 3.0
 
 # --- NEW: Switching Times ---
-T_switch_1 = 3.0
-T_switch_2 = 5.0
+# T_switch_1 = 1.5
+# T_switch_2 = 3.0
+T_switch_1 = 1.5
+T_switch_2 = 2.0
 # Dimensions (Must match system definition)
 w_box = 0.4
 h_box = 0.4
@@ -36,7 +39,7 @@ h_box = 0.4
 # Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 400.0, 30.0, 30.0, 30.0]))           
 # R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*1
 Q_mpc = jnp.diag(jnp.array([100.0, 100.0, 100.0, 30.0, 30.0, 30.0]))           
-R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*10
+R_mpc = jnp.diag(jnp.array([1.0, 1.0, 1.0*1e0]))*1e-3
 # Q_f_mpc = Q_mpc * 10.0
 A = jnp.array([[0, 0, 0, 1, 0, 0],
                [0, 0, 0, 0, 1, 0],
@@ -214,6 +217,22 @@ casadi_controller = CasadiLowLevelControllerDualArm(
     w_smooth=500.0*0.0
 )
 
+
+def interpolate_box_trajectory(t_current, t_start, t_end, start_state, end_state):
+    """
+    Simple linear interpolation for box trajectory between MPC updates.
+    This is used to provide a reference for the low-level controller at each sim step.
+    """
+    if t_current <= t_start:
+        return start_state
+    elif t_current >= t_end:
+        return end_state
+    else:
+        alpha = (t_current - t_start) / (t_end - t_start)
+        # saturate alpha to [0, 1]
+        alpha = jnp.clip(alpha, 0.0, 1.0)
+        return (1 - alpha) * start_state + alpha * end_state
+
 # ==========================================
 # 3. Simulation Execution
 # ==========================================
@@ -354,14 +373,23 @@ def run_simulation():
         if tspan_sim[k] >= T_switch_1 and tspan_sim[k] < T_switch_2:
             # Change target to: x=0, y=0.8, phi=0 (Upright lift)
             current_target = target_2
+            # current_target = interpolate_box_trajectory(
+            #     t_current=tspan_sim[k], t_start=T_switch_1, t_end=T_switch_1 + (T_switch_2-T_switch_1)/5,
+            #     start_state=x_box_target_init, end_state=target_2)
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
         elif tspan_sim[k] >= T_switch_2:
             current_target = target_3
+            # current_target = interpolate_box_trajectory(
+            #     t_current=tspan_sim[k], t_start=T_switch_2, t_end=T_switch_2 + (T_switch_2-T_switch_1)/5,
+            #     start_state=target_2, end_state=target_3)
             # Optional: Update system prop if needed elsewhere, though MPC uses the passed var
             manipulator.box_target_state = current_target 
         else:
              current_target = x_box_target_init
+            # current_target = interpolate_box_trajectory(
+            #     t_current=tspan_sim[k], t_start=0.0, t_end=T_switch_1/5,
+            #     start_state=x_0[jnp.array([6, 7, 8, 15, 16, 17])], end_state=x_box_target_init)
 
         # Control Logic
         if k % control_ratio == 0:
@@ -501,6 +529,20 @@ if __name__ == "__main__":
     ref_x_traj[mask3] = target_3[0]
     ref_y_traj[mask3] = target_3[1]
     ref_phi_traj[mask3] = target_3[2]
+
+    # save data to a file
+    # create header and stack data together
+    header = "t, r_obox_x, r_obox_y, r_obox_phi"
+    data = np.vstack([tspan, X[6:9, :]]).T
+    # create path and save
+    path = Path(Path(__file__).parent, "results.csv")
+    np.savetxt(
+        path,
+        data,
+        delimiter=", ",
+        header=header,
+        comments="",
+    )
 
     # --- Plotting ---
     fig, axs = plt.subplots(3, 1, figsize=(8, 9), sharex=True)

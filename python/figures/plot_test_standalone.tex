@@ -1,0 +1,45 @@
+\documentclass[tikz, border=2mm]{standalone} % Use standalone class
+\usepackage[utf8]{inputenc}
+
+% --- Essential Packages ---
+\usepackage{pgfplots}   
+\pgfplotsset{compat=1.18} 
+\usepackage{tikz}
+
+% --- Define custom colors ---
+\definecolor{pt_bright_red}{RGB}{230, 97, 74}
+\definecolor{pt_bright_green}{RGB}{94, 201, 98}
+\definecolor{pt_bright_blue}{RGB}{74, 144, 226}
+
+% --- Math Commands ---
+\newcommand{\vr}{\mathbf{r}}
+\newcommand{\vt}{\mathbf{t}}
+
+\begin{document}
+	
+	% Note: Since we are in standalone, we don't need the figure environment 
+	% or \textwidth (which doesn't exist here). Use fixed units for width/height.
+	
+	\newcommand{\plotPath}{../main_dual_arm_manipulator/results.csv}
+	
+	\begin{tikzpicture}
+		\begin{axis}[
+			height=6cm,      % Use absolute units (cm/in) instead of \textheight
+			width=10cm,      % Use absolute units instead of \textwidth
+			xlabel=$s$,
+			grid=major,
+			ymin=-0.9,
+			ymax= 1.9,
+			legend style={at={(0,1)}, anchor=north west, font=\tiny},
+			]
+			\addplot[black, solid,line width=1.5] table [x=t, y=r_obox_x, col sep=comma] {\plotPath};
+			\addplot[green, solid,line width=1.5] table [x=t, y=r_obox_y, col sep=comma] {\plotPath};
+			\addplot[blue, solid,line width=1.5]  table [x=t, y=r_obox_phi, col sep=comma] {\plotPath};
+			
+			\addlegendentry{${}_I \vr_{OP_x}$}
+			\addlegendentry{${}_I \vr_{OP_y}$}
+			\addlegendentry{${}_I \vr_{OP_z}$}
+		\end{axis}
+	\end{tikzpicture}
+	
+\end{document}
